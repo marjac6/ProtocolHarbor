@@ -1,14 +1,17 @@
 # scanner.py
-# Logika skanowania ramek ARP - Balluff/BNI detector
-
-# scanner.py
-from scapy.all import sniff, ARP
+from scapy.all import sniff, ARP, Ether
 from scapy.arch.windows import get_windows_if_list
 import threading
 
+# OUI producentów — pierwsze 3 bajty MAC
+VENDOR_OUI = {
+    "00:19:31": "Balluff",
+    # BNI to też Balluff — dodamy jeśli znajdziemy inny OUI
+}
+
+# Fallback — słowa kluczowe w surowych bajtach (na wszelki wypadek)
 KEYWORDS = ["balluff", "bni"]
 
-# Prefiksy które ignorujemy — wirtualne/tunelowe/filtrowe
 IGNORE_SUFFIXES = [
     "WFP Native MAC Layer LightWeight Filter",
     "WFP 802.3 MAC Layer LightWeight Filter",
@@ -18,7 +21,7 @@ IGNORE_SUFFIXES = [
     "Native WiFi Filter Driver",
     "Virtual WiFi Filter Driver",
     "Npcap Packet Driver (NPCAP)",
-    "Balluff Engineering Tool Network Driver",  # ← dodane
+    "Balluff Engineering Tool Network Driver",
 ]
 
 IGNORE_DESCRIPTIONS = [
@@ -36,22 +39,17 @@ IGNORE_DESCRIPTIONS = [
 
 
 def is_useful_adapter(adapter):
-    """Filtruje tylko fizyczne/użyteczne adaptery."""
     desc = adapter.get("description", "")
-    name = adapter.get("name", "")
-
     for suffix in IGNORE_SUFFIXES:
         if suffix in desc:
             return False
     for keyword in IGNORE_DESCRIPTIONS:
         if keyword in desc:
             return False
-
     return True
 
 
 def get_adapters():
-    """Zwraca przefiltrowaną listę adapterów."""
     adapters = []
     try:
         win_ifaces = get_windows_if_list()
@@ -68,24 +66,56 @@ def get_adapters():
     return adapters
 
 
+def get_oui(mac: str) -> str:
+    """Zwraca pierwsze 3 oktety MAC jako OUI, np. '00:19:31'."""
+    parts = mac.lower().replace("-", ":").split(":")
+    if len(parts) >= 3:
+        return ":".join(parts[:3])
+    return ""
+
+
 def check_arp_packet(packet, callback):
-    """Sprawdza czy ramka ARP zawiera słowo kluczowe Balluff/BNI."""
-    if packet.haslayer(ARP):
-        raw = bytes(packet).lower()
-        for keyword in KEYWORDS:
-            if keyword.encode() in raw:
-                info = {
-                    "ip": packet[ARP].psrc,
-                    "mac": packet[ARP].hwsrc,
-                    "keyword": keyword.upper(),
-                    "adapter": getattr(packet, "sniffed_on", "?")
-                }
-                callback(info)
-                return
+    """Wykrywa urządzenia Balluff/BNI po OUI lub słowie kluczowym."""
+    if not packet.haslayer(ARP):
+        return
+
+    arp = packet[ARP]
+    src_mac = arp.hwsrc.lower()
+    oui = get_oui(src_mac)
+
+    # Metoda 1: OUI match
+    vendor = VENDOR_OUI.get(oui)
+    if vendor:
+        # Dla ARP Probe: target IP to właściwe IP urządzenia
+        # Dla normalnego ARP: sender IP
+        device_ip = arp.pdst if arp.psrc == "0.0.0.0" else arp.psrc
+        info = {
+            "ip":      device_ip,
+            "mac":     arp.hwsrc,
+            "keyword": vendor,
+            "adapter": getattr(packet, "sniffed_on", "?"),
+            "type":    "ARP Probe" if arp.psrc == "0.0.0.0" else "ARP"
+        }
+        callback(info)
+        return
+
+    # Metoda 2: fallback — słowa kluczowe w surowych bajtach
+    raw_bytes = bytes(packet).lower()
+    for keyword in KEYWORDS:
+        if keyword.encode() in raw_bytes:
+            device_ip = arp.pdst if arp.psrc == "0.0.0.0" else arp.psrc
+            info = {
+                "ip":      device_ip,
+                "mac":     arp.hwsrc,
+                "keyword": keyword.upper(),
+                "adapter": getattr(packet, "sniffed_on", "?"),
+                "type":    "ARP Probe" if arp.psrc == "0.0.0.0" else "ARP"
+            }
+            callback(info)
+            return
 
 
 def start_scan(adapter_name, callback, stop_event):
-    """Uruchamia nasłuchiwanie na wybranym adapterze."""
     def handler(packet):
         if stop_event.is_set():
             return
@@ -100,11 +130,11 @@ def start_scan(adapter_name, callback, stop_event):
             store=False
         )
     except Exception as e:
-        print(f"Błąd skanowania {adapter_name}: {e}")
+        if "not found" not in str(e).lower():
+            print(f"Błąd skanowania {adapter_name}: {e}")
 
 
 def start_scan_all(callback, stop_event):
-    """Uruchamia nasłuchiwanie na wszystkich użytecznych adapterach."""
     adapters = get_adapters()
     threads = []
     for adapter in adapters:
@@ -118,4 +148,71 @@ def start_scan_all(callback, stop_event):
         )
         t.start()
         threads.append(t)
+    return threads
+
+def send_arp_probe(adapter_name, stop_event):
+    """
+    Wysyła ARP Probe (src=0.0.0.0) na broadcast do wszystkich adapterów.
+    Urządzenie odpowie niezależnie od swojej podsieci.
+    """
+    from scapy.all import sendp, ARP, Ether
+    import time
+
+    # Wysyłamy do różnych potencjalnych IP żeby sprowokować odpowiedź
+    target_ips = [
+        "255.255.255.255",
+        "192.168.0.1",
+        "192.168.1.1",
+        "10.0.0.1",
+        "172.16.0.1",
+    ]
+
+    for target_ip in target_ips:
+        if stop_event.is_set():
+            return
+        try:
+            pkt = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(
+                op=1,           # request
+                hwsrc="00:00:00:00:00:00",
+                psrc="0.0.0.0",
+                hwdst="00:00:00:00:00:00",
+                pdst=target_ip
+            )
+            sendp(pkt, iface=adapter_name, verbose=False)
+            time.sleep(0.1)
+        except Exception as e:
+            print(f"Błąd wysyłania probe na {adapter_name}: {e}")
+
+
+def start_active_scan(callback, stop_event):
+    """
+    Łączy nasłuchiwanie pasywne + aktywne wysyłanie ARP Probe
+    na wszystkich adapterach.
+    """
+    adapters = get_adapters()
+    threads = []
+
+    for adapter in adapters:
+        name = adapter["name"]
+        if not name:
+            continue
+
+        # Wątek nasłuchujący
+        t_sniff = threading.Thread(
+            target=start_scan,
+            args=(name, callback, stop_event),
+            daemon=True
+        )
+        t_sniff.start()
+        threads.append(t_sniff)
+
+        # Wątek wysyłający probe
+        t_probe = threading.Thread(
+            target=send_arp_probe,
+            args=(name, stop_event),
+            daemon=True
+        )
+        t_probe.start()
+        threads.append(t_probe)
+
     return threads
