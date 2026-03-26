@@ -101,10 +101,9 @@ The goal is to support all major protocols used by Balluff network devices. Vers
 
 | Protocol | Status |
 |---|---|
-| ARP (passive + active) | ✅ v0.2.0 |
+| EtherNet/IP (ARP passive + active) | ✅ v0.2.0 |
 | Profinet DCP | ✅ v0.2.0 |
 | Modbus TCP | 🔜 planned |
-| EtherNet/IP | 🔜 planned |
 | EtherCAT | 🔜 planned |
 
 ---
