@@ -23,11 +23,7 @@ A network scanning tool for detecting industrial field devices without prior kno
 
 ---
 
-## Screenshot
 
-![Screenshot](screenshot.png)
-
----
 
 ## Requirements
 
