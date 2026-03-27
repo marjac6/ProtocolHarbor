@@ -1,4 +1,9 @@
 Changelog
+
+[0.3.0]
+
+Added Ethercat scan for single device (pysoem)
+
 [0.2.0]
 
 Removed auto-refresh panel — scan runs until manually stopped
