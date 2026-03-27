@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext
 import threading
 import webbrowser
+import string
+import time
 from svglib.svglib import svg2rlg
 from reportlab.graphics import renderPM
 from PIL import Image, ImageTk
@@ -12,11 +14,18 @@ from io import BytesIO
 from version import __version__
 from scanner import get_adapters, start_scan, start_active_scan, send_arp_probe
 from profinet_scanner import start_dcp_scan_all, start_dcp_scan
+from lldp_scanner import start_lldp_scan_all, start_lldp_scan
 from ethercat_scanner import start_ecat_scan_all, start_ecat_scan
+from ethernetip_scanner import probe_enip_device
+from modbus_scanner import probe_modbus_device
+from vendor_registry import lookup_vendor_name
+from debug_utils import get_logger
 
-REPO_URL = "https://github.com/marjac6/balluff-scanner"
+REPO_URL = "https://github.com/<org>/<repo>"
 ADAPTER_REFRESH_IDLE_MS = 5000
 ADAPTER_REFRESH_SCANNING_MS = 15000
+PROBE_COOLDOWN_SECONDS = 15
+LOGGER = get_logger(__name__)
 
 
 def _resource_path(filename):
@@ -37,7 +46,7 @@ CHANGELOG = _load_changelog()
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"Balluff / BNI Device Scanner  v{__version__}")
+        self.root.title(f"Industrial Device Scanner  v{__version__}")
         self.root.geometry("1020x640")
         self.root.resizable(True, True)
         self.root.minsize(720, 480)
@@ -46,6 +55,10 @@ class App:
         self.found_devices = []
         self.adapters = []
         self._adapter_signature = ()
+        self._all_vendors_label = "Wszyscy producenci"
+        self._probe_lock = threading.Lock()
+        self._scheduled_protocol_probes = {}
+        self.vendor_filter_var = tk.StringVar(value=self._all_vendors_label)
 
         def svg_to_tkimg(svg_path, size=(16, 16)):
             drawing = svg2rlg(svg_path)
@@ -74,7 +87,7 @@ class App:
         self.adapter_cb.grid(row=0, column=1, padx=8)
 
         self.btn_scan = tk.Button(
-            top, text="▶  Start", width=12,
+            top, text="▶  Skanuj", width=12,
             bg="#2e7d32", fg="white", font=("Segoe UI", 9, "bold"),
             command=self.toggle_scan,
         )
@@ -102,25 +115,41 @@ class App:
                                      padx=8, pady=6)
         table_frame.pack(fill="both", expand=True, padx=10, pady=4)
 
-        cols = ("ip", "mac", "name", "protocol", "vendor_id", "device_id", "version", "adapter")
+        filter_bar = tk.Frame(table_frame)
+        filter_bar.pack(fill="x", pady=(0, 6))
+
+        tk.Label(filter_bar, text="Filtr producenta:", font=("Segoe UI", 8)).pack(side="left", padx=(0, 6))
+        self.vendor_filter_cb = ttk.Combobox(
+            filter_bar,
+            textvariable=self.vendor_filter_var,
+            width=34,
+            state="readonly",
+        )
+        self.vendor_filter_cb.pack(side="left")
+        self.vendor_filter_cb.bind("<<ComboboxSelected>>", self._on_vendor_filter_change)
+        self._refresh_vendor_filter_options()
+
+        cols = ("ip", "mac", "producer", "module_name", "protocol", "vendor_id", "device_id", "version", "adapter")
         self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=8)
 
         self.tree.heading("ip",        text="Adres IP")
         self.tree.heading("mac",       text="Adres MAC")
-        self.tree.heading("name",      text="Nazwa / Producent")
+        self.tree.heading("producer",  text="Producent")
+        self.tree.heading("module_name", text="Nazwa modułu")
         self.tree.heading("protocol",  text="Protokół")
-        self.tree.heading("vendor_id", text="VendorID")
-        self.tree.heading("device_id", text="DeviceID / ProductName")
-        self.tree.heading("version",   text="Version")
+        self.tree.heading("vendor_id", text="ID producenta")
+        self.tree.heading("device_id", text="ID urządzenia")
+        self.tree.heading("version",   text="Wersja")
         self.tree.heading("adapter",   text="Adapter")
 
         self.tree.column("ip",        width=110)
         self.tree.column("mac",       width=140)
-        self.tree.column("name",      width=185)
+        self.tree.column("producer",  width=140)
+        self.tree.column("module_name", width=180)
         self.tree.column("protocol",  width=105)
-        self.tree.column("vendor_id", width=90)
-        self.tree.column("device_id", width=175)
-        self.tree.column("version",   width=65)
+        self.tree.column("vendor_id", width=100)
+        self.tree.column("device_id", width=120)
+        self.tree.column("version",   width=85)
         self.tree.column("adapter",   width=155)
 
         scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
@@ -143,7 +172,7 @@ class App:
         tk.Label(bottom, text=f"v{__version__}",
                  font=("Consolas", 7), fg="#888", bg="#f0f0f0").pack(side="left", padx=8)
 
-        tk.Button(bottom, text="changelog",
+        tk.Button(bottom, text="zmiany",
                   font=("Segoe UI", 7), fg="#555", bg="#f0f0f0",
                   relief="flat", cursor="hand2",
                   command=self._show_changelog).pack(side="left", padx=2)
@@ -152,7 +181,7 @@ class App:
         repo_frame.pack(side="right", padx=8)
         if self.github_logo:
             tk.Label(repo_frame, image=self.github_logo, bg="#f0f0f0").pack(side="left")
-        lnk = tk.Label(repo_frame, text="github: balluff-scanner",
+        lnk = tk.Label(repo_frame, text="github: industrial-device-scanner",
                         font=("Segoe UI", 7, "underline"), fg="#0969da",
                         bg="#f0f0f0", cursor="hand2")
         lnk.pack(side="left", padx=2)
@@ -168,6 +197,171 @@ class App:
         st.insert("1.0", CHANGELOG)
         st.configure(state="disabled")
 
+    def _on_vendor_filter_change(self, _event=None):
+        self._rebuild_table()
+        self.log_message(f"Filtr producenta: {self.vendor_filter_var.get()}")
+
+    def _producer_for_info(self, info):
+        protocol = info.get("protocol") or info.get("type", "ARP")
+        vendor_id = info.get("vendor_id", "")
+        if protocol == "EtherCAT":
+            return info.get("vendor_name", "") or lookup_vendor_name(vendor_id, protocol="ethercat")
+        if protocol == "Profinet DCP":
+            return info.get("vendor_name", "") or lookup_vendor_name(vendor_id, protocol="profinet")
+        if protocol == "EtherNet/IP":
+            return info.get("producer", "") or info.get("vendor_name", "") or lookup_vendor_name(vendor_id, protocol="ethernet/ip")
+        if protocol == "Modbus TCP":
+            return info.get("producer", "") or info.get("vendor_name", "")
+        return info.get("vendor_name", "") or info.get("keyword", "")
+
+    def _refresh_vendor_filter_options(self):
+        current = self.vendor_filter_var.get() or self._all_vendors_label
+        vendors = sorted({self._producer_for_info(info) for info in self.found_devices if self._producer_for_info(info)})
+        values = [self._all_vendors_label] + vendors
+        self.vendor_filter_cb["values"] = values
+        if current in values:
+            self.vendor_filter_var.set(current)
+        else:
+            self.vendor_filter_var.set(self._all_vendors_label)
+
+    def _device_to_row(self, info):
+        protocol = info.get("protocol") or "ARP"
+        producer = self._producer_for_info(info)
+
+        if protocol == "EtherCAT":
+            module_name = info.get("product_name", "") or info.get("name", "")
+            device_id   = info.get("product_code", "")
+            version     = info.get("sw_version", "")
+        elif protocol == "EtherNet/IP":
+            module_name = (
+                info.get("product_name")
+                or info.get("module_name")
+                or info.get("model_name")
+                or info.get("name_of_station")
+                or info.get("type_of_station")
+                or ""
+            )
+            device_id = info.get("device_id", "")
+            version = info.get("version", "") or info.get("firmware", "")
+        elif protocol == "Modbus TCP":
+            module_name = (
+                info.get("product_name")
+                or info.get("model_name")
+                or info.get("module_name")
+                or info.get("name_of_station")
+                or info.get("type_of_station")
+                or ""
+            )
+            device_id = info.get("device_id", "")
+            version = info.get("version", "") or info.get("firmware", "")
+        elif protocol == "Profinet DCP":
+            module_name = (
+                info.get("name_of_station")
+                or info.get("type_of_station")
+                or info.get("product_name")
+                or info.get("module_name")
+                or info.get("model_name")
+                or info.get("lldp_model")
+                or info.get("lldp_system_name")
+                or ""
+            )
+            device_id = info.get("device_id", "")
+            version = info.get("firmware", "") or info.get("version", "")
+        else:
+            module_name = (
+                info.get("product_name")
+                or info.get("module_name")
+                or info.get("model_name")
+                or info.get("name_of_station")
+                or info.get("type_of_station")
+                or ""
+            )
+            device_id = info.get("device_id", "")
+            version   = (
+                info.get("sw_version")
+                or info.get("firmware")
+                or info.get("version")
+                or ""
+            )
+
+        return (
+            info.get("ip", ""),
+            info.get("mac", ""),
+            producer,
+            module_name,
+            protocol,
+            info.get("vendor_id", ""),
+            device_id,
+            version,
+            info.get("adapter", "?"),
+        )
+
+    def _is_visible(self, info):
+        selected = self.vendor_filter_var.get() or self._all_vendors_label
+        if selected == self._all_vendors_label:
+            return True
+        return self._producer_for_info(info) == selected
+
+    def _rebuild_table(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for info in self.found_devices:
+            if self._is_visible(info):
+                self.tree.insert("", "end", values=self._device_to_row(info))
+
+    def _hex_to_text_details(self, hex_value):
+        text = str(hex_value or "").strip()
+        if not text:
+            return ""
+
+        if text.lower().startswith("0x"):
+            text = text[2:]
+
+        if not text:
+            return ""
+
+        if len(text) % 2 == 1:
+            text = "0" + text
+
+        try:
+            data = bytes.fromhex(text)
+        except ValueError:
+            return ""
+
+        dec_value = int.from_bytes(data, byteorder="big", signed=False)
+        ascii_preview = "".join(chr(b) if chr(b) in string.printable and b >= 32 else "." for b in data)
+        return f"dec={dec_value}, ascii='{ascii_preview}'"
+
+    def _log_ecat_diagnostics(self, info):
+        LOGGER.debug("--- Diagnostyka EtherCAT ---")
+        ordered_keys = [
+            "adapter",
+            "slave_index",
+            "slave_count",
+            "vendor_name",
+            "vendor_id",
+            "product_code",
+            "revision",
+            "serial",
+            "product_name",
+            "product_name_source",
+            "device_name_sdo",
+            "sii_name",
+            "sw_version",
+            "protocol",
+        ]
+
+        for key in ordered_keys:
+            if key in info:
+                LOGGER.debug("%s: %s", key, info.get(key, ""))
+
+        for key in ("vendor_id", "product_code", "revision", "serial"):
+            details = self._hex_to_text_details(info.get(key, ""))
+            if details:
+                LOGGER.debug("%s_decoded: %s", key, details)
+
+        LOGGER.debug("----------------------------")
+
     def _adapter_sig(self, adapters):
         return tuple(
             (a.get("name", ""), a.get("description", ""), tuple(a.get("ips", [])))
@@ -178,9 +372,19 @@ class App:
         ips = ", ".join(adapter.get("ips", [])) or "brak IP"
         return f"{adapter.get('description', '')}  [{ips}]"
 
+    def _get_selected_adapter_index(self):
+        selected_value = self.adapter_var.get().strip()
+        if not selected_value or selected_value == "Wszystkie adaptery":
+            return -1
+
+        for index, adapter in enumerate(self.adapters):
+            if self._adapter_label(adapter) == selected_value:
+                return index
+        return -1
+
     def _refresh_adapters(self, force_log=False):
         current_value = self.adapter_var.get()
-        current_index = self.adapter_cb.current()
+        current_index = self._get_selected_adapter_index()
         new_adapters = get_adapters()
         new_sig = self._adapter_sig(new_adapters)
         if not force_log and new_sig == self._adapter_signature:
@@ -193,14 +397,14 @@ class App:
         self.adapter_cb["values"] = names
 
         if current_value in names:
-            self.adapter_var.set(current_value)
+            self.adapter_cb.current(names.index(current_value))
         else:
             self.adapter_cb.current(0)
             if self.scanning and current_index > 0:
                 self.log_message("Selected adapter disconnected/removed. Stopping scan.")
                 self._stop_scan()
 
-        self.log_message(f"Adapters updated: {len(self.adapters)} available.")
+        LOGGER.debug("Adapters updated: %s available.", len(self.adapters))
 
     def _schedule_adapter_refresh(self):
         self._refresh_adapters(force_log=False)
@@ -224,51 +428,217 @@ class App:
     def on_ecat_found(self, info):
         self.root.after(0, self._add_ecat_device, info)
 
+    def on_enip_found(self, info):
+        self.root.after(0, self._add_enip_device, info)
+
+    def on_modbus_found(self, info):
+        self.root.after(0, self._add_modbus_device, info)
+
+    def on_lldp_found(self, info):
+        self.root.after(0, self._merge_lldp_info, info)
+
+    def _merge_lldp_info(self, info):
+        mac = (info.get("mac") or "").lower()
+        ip  = info.get("ip", "")
+        if not mac and not ip:
+            return
+
+        dev = self._find_device(ip, mac)
+        if dev is None:
+            # No existing entry yet — create a stub so LLDP data is not lost
+            dev, _ = self._ensure_device(ip, mac, "ARP", "?")
+
+        changed = False
+        changed |= self._fill_field(dev, "ip",              ip)
+        changed |= self._fill_field(dev, "vendor_name",     info.get("producer"))
+        changed |= self._fill_field(dev, "firmware",        info.get("firmware"))
+        changed |= self._fill_field(dev, "version",         info.get("firmware"))
+        # Keep LLDP identity fields separate from Profinet DCP identity
+        # to avoid replacing correct DCP module naming.
+        changed |= self._fill_field(dev, "lldp_model",       info.get("model"))
+        changed |= self._fill_field(dev, "lldp_system_name", info.get("system_name"))
+        changed |= self._fill_field(dev, "product_name",     info.get("model"))
+
+        if changed:
+            self._refresh_vendor_filter_options()
+            self._rebuild_table()
+            self.log_message(f"Uzupełniono dane przez LLDP: {ip or mac}")
+
+    def _queue_protocol_probe(self, protocol, ip, adapter_name, probe_func, callback):
+        key = (protocol, ip)
+        now = time.monotonic()
+        with self._probe_lock:
+            last_run = self._scheduled_protocol_probes.get(key, 0.0)
+            if (now - last_run) < PROBE_COOLDOWN_SECONDS:
+                return
+            self._scheduled_protocol_probes[key] = now
+
+        threading.Thread(
+            target=probe_func,
+            args=(ip, adapter_name, callback),
+            daemon=True,
+        ).start()
+
+    def _schedule_identity_probes(self, info):
+        ip = (info.get("ip") or "").strip()
+        if not ip or ip == "0.0.0.0":
+            return
+
+        adapter_name = info.get("adapter", "?")
+        self._queue_protocol_probe("EtherNet/IP", ip, adapter_name, probe_enip_device, self.on_enip_found)
+        self._queue_protocol_probe("Modbus TCP", ip, adapter_name, probe_modbus_device, self.on_modbus_found)
+
+    _PROTOCOL_PAYLOAD_FIELDS = (
+        "vendor_name",
+        "producer",
+        "vendor_id",
+        "device_id",
+        "version",
+        "firmware",
+        "product_name",
+        "module_name",
+        "model_name",
+        "name_of_station",
+        "type_of_station",
+        "device_role",
+        "device_instance",
+    )
+
+    def _find_device(self, ip, mac):
+        """Return existing non-EtherCAT device matching MAC or IP, or None."""
+        mac_n = (mac or "").lower().strip()
+        ip_n  = (ip  or "").strip()
+        for dev in self.found_devices:
+            if dev.get("protocol") == "EtherCAT":
+                continue
+            if mac_n and (dev.get("mac") or "").lower() == mac_n:
+                return dev
+            if ip_n and ip_n != "0.0.0.0" and dev.get("ip") == ip_n:
+                return dev
+        return None
+
+    def _ensure_device(self, ip, mac, protocol, adapter):
+        """Find existing device or create a new stub. Returns (device, is_new)."""
+        dev = self._find_device(ip, mac)
+        if dev is not None:
+            return dev, False
+        dev = {
+            "ip":       ip or "",
+            "mac":      mac or "",
+            "protocol": protocol,
+            "adapter":  adapter or "?",
+        }
+        self.found_devices.append(dev)
+        return dev, True
+
+    def _update_protocol(self, device, protocol):
+        """Set active protocol; ARP never downgrades an already identified protocol."""
+        current = device.get("protocol", "ARP")
+        if protocol == "ARP":
+            if not current:
+                device["protocol"] = "ARP"
+                return True
+            return False
+        if current != protocol:
+            device["protocol"] = protocol
+            return True
+        return False
+
+    def _reset_protocol_payload(self, device):
+        """Drop stale protocol-dependent fields before applying a new protocol payload."""
+        changed = False
+        for field in self._PROTOCOL_PAYLOAD_FIELDS:
+            if field in device:
+                device.pop(field, None)
+                changed = True
+        return changed
+
+    def _fill_field(self, device, field, value):
+        """Fill device[field] only if currently empty. Returns True if changed."""
+        if value and not device.get(field):
+            device[field] = value
+            return True
+        return False
+
+    def _overwrite_field(self, device, field, value):
+        """Overwrite device[field] with value if value is non-empty. Returns True if changed."""
+        if value and device.get(field) != value:
+            device[field] = value
+            return True
+        return False
+
     # ── Device adders ─────────────────────────────────────────────────────────
 
     def _add_device(self, info):
-        key = (info["ip"], info["mac"])
-        if key in [(d.get("ip"), d.get("mac")) for d in self.found_devices]:
+        """ARP discovery: find-or-create device entry, merge ARP data."""
+        info = dict(info)
+        ip  = (info.get("ip")  or "").strip()
+        mac = (info.get("mac") or "").strip()
+        if not ip and not mac:
             return
-        self.found_devices.append(info)
-        self.tree.insert("", "end", values=(
-            info.get("ip", ""),
-            info.get("mac", ""),
-            info.get("keyword", ""),
-            info.get("type", "ARP"),
-            "", "", "",
-            info.get("adapter", "?"),
-        ))
-        self.log_message(
-            f"✔ ARP: {info.get('keyword','?')}  IP={info.get('ip','?')}  "
-            f"MAC={info.get('mac','?')}  [{info.get('adapter','?')}]"
-        )
+
+        dev, is_new = self._ensure_device(ip, mac, "ARP", info.get("adapter", "?"))
+
+        changed = False
+        changed |= self._fill_field(dev, "ip",          ip)
+        changed |= self._fill_field(dev, "mac",         mac)
+        changed |= self._fill_field(dev, "vendor_name", info.get("vendor_name") or info.get("keyword"))
+        changed |= self._fill_field(dev, "adapter",     info.get("adapter"))
+
+        if is_new:
+            self._refresh_vendor_filter_options()
+            self._rebuild_table()
+            self.log_message(f"Wykryto urządzenie: {ip or mac}")
+        elif changed:
+            self._refresh_vendor_filter_options()
+            self._rebuild_table()
+
+        # Re-probe while scanning (with cooldown) so protocol switches are picked up without restart.
+        self._schedule_identity_probes({"ip": dev.get("ip", ""), "adapter": dev.get("adapter", "?")})
 
     def _add_profinet_device(self, info):
-        key = (info.get("ip", ""), info.get("mac", ""))
-        if key in [(d.get("ip"), d.get("mac")) for d in self.found_devices]:
-            return
-        self.found_devices.append(info)
-        self.tree.insert("", "end", values=(
-            info.get("ip", ""),
-            info.get("mac", ""),
-            info.get("name_of_station", ""),
-            "Profinet DCP",
-            info.get("vendor_id", ""),
-            info.get("device_id", ""),
-            "",
-            info.get("adapter", "?"),
-        ))
-        self.log_message(
-            f"🏭 Profinet: {info.get('name_of_station', '?')}  "
-            f"IP={info.get('ip', '?')}  MAC={info.get('mac', '?')}"
-        )
+        info = dict(info)
+        ip  = (info.get("ip")  or "").strip()
+        mac = (info.get("mac") or "").strip()
+
+        dev, is_new = self._ensure_device(ip, mac, "Profinet DCP", info.get("adapter", "?"))
+        protocol_changed = self._update_protocol(dev, "Profinet DCP")
+
+        changed = is_new or protocol_changed
+        if protocol_changed:
+            changed |= self._reset_protocol_payload(dev)
+
+        changed |= self._overwrite_field(dev, "ip",      ip)
+        changed |= self._fill_field(dev,      "mac",     mac)
+        changed |= self._overwrite_field(dev, "adapter", info.get("adapter"))
+
+        w = self._overwrite_field
+        changed |= w(dev, "name_of_station", info.get("name_of_station"))
+        changed |= w(dev, "type_of_station", info.get("type_of_station"))
+        changed |= w(dev, "vendor_id",       info.get("vendor_id"))
+        changed |= w(dev, "device_id",       info.get("device_id"))
+        changed |= w(dev, "device_role",     info.get("device_role"))
+        changed |= w(dev, "device_instance", info.get("device_instance"))
+        changed |= w(dev, "firmware",        info.get("firmware"))
+
+        if protocol_changed or not dev.get("vendor_name"):
+            vn = info.get("vendor_name") or lookup_vendor_name(info.get("vendor_id", ""), protocol="profinet")
+            if vn:
+                dev["vendor_name"] = vn
+                changed = True
+
+        if changed:
+            self._refresh_vendor_filter_options()
+            self._rebuild_table()
+        if is_new:
+            self.log_message(f"Wykryto urządzenie Profinet DCP: {ip}")
+        self._schedule_identity_probes({"ip": dev.get("ip", ""), "adapter": dev.get("adapter", "?")})
 
     def _add_ecat_device(self, info):
         """
         Deduplikacja EtherCAT po (adapter, vendor_id, product_name).
-        Wyświetla:
-          name       = product_name (np. "BNI XG5-538-0B5-R067")
+                Wyświetla:
+                    name       = product_name (np. "IO Module XG5-538-0B5-R067")
           vendor_id  = hex VID
           device_id  = product_code (prawdziwy EtherCAT Product Code)
           version    = sw_version   (np. "1.3.1")
@@ -289,22 +659,93 @@ class App:
             if dk == key:
                 return
 
+        info = dict(info)
+        info["protocol"] = "EtherCAT"
+        info["vendor_name"] = info.get("vendor_name", "") or lookup_vendor_name(vendor_id, protocol="ethercat")
+
         self.found_devices.append(info)
-        self.tree.insert("", "end", values=(
-            "",                                  # ip
-            "N/A",                               # mac
-            product_name or info.get("name",""), # name
-            "EtherCAT",                          # protocol
-            vendor_id,                           # vendor_id
-            product_code,                        # device_id column = EtherCAT Product Code
-            sw_version,                          # version column
-            info.get("adapter", "?"),            # adapter
-        ))
-        self.log_message(
-            f"⚡ EtherCAT: {product_name or '?'}  "
-            f"v{sw_version}  VID={vendor_id}  PID={product_code}  "
-            f"[{info.get('adapter','?')}]"
-        )
+        self._refresh_vendor_filter_options()
+        if self._is_visible(info):
+            self.tree.insert("", "end", values=self._device_to_row(info))
+        self.log_message(f"Wykryto urządzenie EtherCAT: {product_name or info.get('ip', '?')}")
+        self._log_ecat_diagnostics(info)
+
+    def _add_enip_device(self, info):
+        info = dict(info)
+        ip  = (info.get("ip")  or "").strip()
+        mac = (info.get("mac") or "").strip()
+
+        dev, is_new = self._ensure_device(ip, mac, "EtherNet/IP", info.get("adapter", "?"))
+        protocol_changed = self._update_protocol(dev, "EtherNet/IP")
+
+        changed = is_new or protocol_changed
+        if protocol_changed:
+            changed |= self._reset_protocol_payload(dev)
+
+        changed |= self._overwrite_field(dev, "ip",      ip)
+        changed |= self._fill_field(dev,      "mac",     mac)
+        changed |= self._overwrite_field(dev, "adapter", info.get("adapter"))
+
+        w = self._overwrite_field
+        changed |= w(dev, "device_id",    info.get("device_id"))
+        changed |= w(dev, "vendor_id",    info.get("vendor_id"))
+        changed |= w(dev, "version",      info.get("version"))
+        changed |= w(dev, "product_name", info.get("product_name") or info.get("module_name"))
+
+        # Producer priority: EIP payload > ODVA map > keep existing
+        if protocol_changed or not dev.get("vendor_name"):
+            eip_producer = info.get("producer") or info.get("vendor_name")
+            if eip_producer:
+                dev["vendor_name"] = eip_producer
+                dev["producer"]    = eip_producer
+                changed = True
+            else:
+                mapped = lookup_vendor_name(info.get("vendor_id", ""), protocol="ethernet/ip")
+                if mapped:
+                    dev["vendor_name"] = mapped
+                    dev["producer"]    = mapped
+                    changed = True
+
+        if changed:
+            self._refresh_vendor_filter_options()
+            self._rebuild_table()
+        if is_new:
+            self.log_message(f"Wykryto urządzenie EtherNet/IP: {ip}")
+
+    def _add_modbus_device(self, info):
+        info = dict(info)
+        ip  = (info.get("ip")  or "").strip()
+        mac = (info.get("mac") or "").strip()
+
+        dev, is_new = self._ensure_device(ip, mac, "Modbus TCP", info.get("adapter", "?"))
+        protocol_changed = self._update_protocol(dev, "Modbus TCP")
+
+        changed = is_new or protocol_changed
+        if protocol_changed:
+            changed |= self._reset_protocol_payload(dev)
+
+        changed |= self._overwrite_field(dev, "ip",      ip)
+        changed |= self._fill_field(dev,      "mac",     mac)
+        changed |= self._overwrite_field(dev, "adapter", info.get("adapter"))
+
+        w = self._overwrite_field
+        changed |= w(dev, "device_id",    info.get("device_id"))
+        changed |= w(dev, "version",      info.get("version"))
+        changed |= w(dev, "product_name",
+                    info.get("product_name") or info.get("module_name") or info.get("model_name"))
+
+        if protocol_changed or not dev.get("vendor_name"):
+            producer = self._producer_for_info({**dev, **info})
+            if producer:
+                dev["vendor_name"] = producer
+                dev["producer"]    = producer
+                changed = True
+
+        if changed:
+            self._refresh_vendor_filter_options()
+            self._rebuild_table()
+        if is_new:
+            self.log_message(f"Wykryto urządzenie Modbus TCP: {ip}")
 
     # ── Scan control ──────────────────────────────────────────────────────────
 
@@ -318,13 +759,15 @@ class App:
         self._refresh_adapters(force_log=False)
         self.scanning = True
         self.stop_event.clear()
-        self.btn_scan.config(text="⏹  Stop", bg="#c62828")
+        with self._probe_lock:
+            self._scheduled_protocol_probes.clear()
+        self.btn_scan.config(text="⏹  Zatrzymaj", bg="#c62828")
         self.status_var.set("⏳ Skanowanie w toku…")
 
-        selected = self.adapter_cb.current()
+        selected_index = self._get_selected_adapter_index()
 
-        if selected == 0:
-            self.log_message("Starting ARP + Profinet DCP + EtherCAT on all adapters…")
+        if selected_index < 0:
+            self.log_message("Start skanowania ARP + Profinet DCP + EtherCAT oraz identyfikacji EtherNet/IP i Modbus TCP na wszystkich adapterach…")
             threading.Thread(
                 target=start_active_scan,
                 args=(self.on_device_found, self.stop_event), daemon=True).start()
@@ -332,19 +775,21 @@ class App:
                 target=start_dcp_scan_all,
                 args=(self.on_profinet_found, self.stop_event), daemon=True).start()
             threading.Thread(
+                target=start_lldp_scan_all,
+                args=(self.on_lldp_found, self.stop_event), daemon=True).start()
+            threading.Thread(
                 target=start_ecat_scan_all,
                 args=(self.on_ecat_found, self.stop_event), daemon=True).start()
         else:
-            idx = selected - 1
-            if idx < 0 or idx >= len(self.adapters):
+            if selected_index >= len(self.adapters):
                 self.log_message("Selected adapter is no longer available. Refreshing list.")
                 self._refresh_adapters(force_log=True)
                 self._stop_scan()
                 return
 
-            adapter = self.adapters[idx]
+            adapter = self.adapters[selected_index]
             self.log_message(
-                f"Starting ARP + Profinet DCP + EtherCAT on: {adapter['description']}…")
+                f"Start skanowania ARP + Profinet DCP + EtherCAT oraz identyfikacji EtherNet/IP i Modbus TCP na: {adapter['description']}…")
             threading.Thread(
                 target=start_scan,
                 args=(adapter["name"], self.on_device_found, self.stop_event), daemon=True).start()
@@ -355,18 +800,24 @@ class App:
                 target=start_dcp_scan,
                 args=(adapter["name"], self.on_profinet_found, self.stop_event), daemon=True).start()
             threading.Thread(
+                target=start_lldp_scan,
+                args=(adapter["name"], self.on_lldp_found, self.stop_event), daemon=True).start()
+            threading.Thread(
                 target=start_ecat_scan,
                 args=(adapter["name"], self.on_ecat_found, self.stop_event), daemon=True).start()
 
     def _stop_scan(self):
         self.scanning = False
         self.stop_event.set()
-        self.btn_scan.config(text="▶  Start", bg="#2e7d32")
+        self.btn_scan.config(text="▶  Skanuj", bg="#2e7d32")
         self.status_var.set("Zatrzymano.")
-        self.log_message("Scan stopped.")
+        self.log_message("Skan zatrzymany.")
 
     def clear_results(self):
         self.found_devices.clear()
+        with self._probe_lock:
+            self._scheduled_protocol_probes.clear()
+        self._refresh_vendor_filter_options()
         for row in self.tree.get_children():
             self.tree.delete(row)
-        self.log_message("Results cleared.")
+        self.log_message("Wyniki wyczyszczone.")

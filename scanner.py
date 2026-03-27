@@ -3,17 +3,9 @@ from scapy.all import sniff, ARP, Ether
 from scapy.arch.windows import get_windows_if_list
 import threading
 from debug_utils import get_logger, log_exception
+from vendor_registry import VENDOR_OUI, VENDOR_KEYWORDS
 
 logger = get_logger(__name__)
-
-# OUI producentów — pierwsze 3 bajty MAC
-VENDOR_OUI = {
-    "00:19:31": "Balluff",
-    # BNI to też Balluff — dodamy jeśli znajdziemy inny OUI
-}
-
-# Fallback — słowa kluczowe w surowych bajtach (na wszelki wypadek)
-KEYWORDS = ["balluff", "bni"]
 
 IGNORE_SUFFIXES = [
     "WFP Native MAC Layer LightWeight Filter",
@@ -24,7 +16,6 @@ IGNORE_SUFFIXES = [
     "Native WiFi Filter Driver",
     "Virtual WiFi Filter Driver",
     "Npcap Packet Driver (NPCAP)",
-    "Balluff Engineering Tool Network Driver",
 ]
 
 IGNORE_DESCRIPTIONS = [
@@ -107,44 +98,48 @@ def get_oui(mac: str) -> str:
 
 
 def check_arp_packet(packet, callback):
-    """Wykrywa urządzenia Balluff/BNI po OUI lub słowie kluczowym."""
+    """Skanuje pakiet ARP i wywołuje callback dla każdego urządzenia.
+    Pole vendor_match=True oznacza znany vendor (OUI/keyword).
+    Filtrowanie wyświetlania odbywa się w GUI.
+    """
     if not packet.haslayer(ARP):
         return
 
     arp = packet[ARP]
     src_mac = arp.hwsrc.lower()
-    oui = get_oui(src_mac)
 
-    # Metoda 1: OUI match
-    vendor = VENDOR_OUI.get(oui)
-    if vendor:
-        # Dla ARP Probe: target IP to właściwe IP urządzenia
-        # Dla normalnego ARP: sender IP
-        device_ip = arp.pdst if arp.psrc == "0.0.0.0" else arp.psrc
-        info = {
-            "ip":      device_ip,
-            "mac":     arp.hwsrc,
-            "keyword": vendor,
-            "adapter": getattr(packet, "sniffed_on", "?"),
-            "type":    "ARP Probe" if arp.psrc == "0.0.0.0" else "ARP"
-        }
-        callback(info)
+    # Pomijamy broadcast i zerowy MAC
+    if src_mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
         return
 
-    # Metoda 2: fallback — słowa kluczowe w surowych bajtach
-    raw_bytes = bytes(packet).lower()
-    for keyword in KEYWORDS:
-        if keyword.encode() in raw_bytes:
-            device_ip = arp.pdst if arp.psrc == "0.0.0.0" else arp.psrc
-            info = {
-                "ip":      device_ip,
-                "mac":     arp.hwsrc,
-                "keyword": keyword.upper(),
-                "adapter": getattr(packet, "sniffed_on", "?"),
-                "type":    "ARP Probe" if arp.psrc == "0.0.0.0" else "ARP"
-            }
-            callback(info)
-            return
+    device_ip = arp.pdst if arp.psrc == "0.0.0.0" else arp.psrc
+    if not device_ip or device_ip in ("0.0.0.0", "255.255.255.255"):
+        return
+
+    oui = get_oui(src_mac)
+    vendor = VENDOR_OUI.get(oui)
+    arp_type = "ARP Probe" if arp.psrc == "0.0.0.0" else "ARP"
+
+    # Sprawdź keyword w surowych bajtach (fallback)
+    keyword_match = None
+    if not vendor:
+        raw_bytes = bytes(packet).lower()
+        for kw in VENDOR_KEYWORDS:
+            if kw.encode() in raw_bytes:
+                keyword_match = kw.upper()
+                break
+
+    vendor_match = bool(vendor or keyword_match)
+    keyword_label = vendor or keyword_match or oui or "Unknown"
+
+    callback({
+        "ip":           device_ip,
+        "mac":          arp.hwsrc,
+        "keyword":      keyword_label,
+        "vendor_match": vendor_match,
+        "adapter":      getattr(packet, "sniffed_on", "?"),
+        "type":         arp_type,
+    })
 
 
 def start_scan(adapter_name, callback, stop_event):

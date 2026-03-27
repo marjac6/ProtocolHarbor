@@ -1,19 +1,19 @@
-# Balluff Device Scanner
+# Industrial Device Scanner
 
-![Version](https://img.shields.io/badge/version-0.3.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 
-A network scanning tool for detecting **Balluff** and **BNI** devices without prior knowledge of the subnet. Designed for Balluff engineers and external system integrators working with Balluff hardware.
+A network scanning tool for detecting industrial field devices without prior knowledge of the subnet. Designed for engineers and system integrators working with industrial hardware.
 
-> **Current version:** `v0.3.0` — ARP passive/active scan + Profinet DCP discovery
+> **Current version:** `v1.0.0` — multi-protocol industrial device discovery
 
 ---
 
 ## Features
 
-- Detects Balluff/BNI devices via **ARP** (passive + active probe)
+- Detects industrial devices via **ARP** (passive + active probe)
 - Detects Profinet devices via **DCP Identify** multicast
 - Scans all network adapters simultaneously or a single selected adapter
 - Continuous scan — devices are added to the list as they respond
@@ -44,8 +44,8 @@ A network scanning tool for detecting **Balluff** and **BNI** devices without pr
 
 ```powershell
 # 1. Clone the repository
-git clone https://github.com/marjac6/balluff-scanner.git
-cd balluff-scanner
+git clone <your-repo-url>
+cd <your-repo-folder>
 
 # 2. Create and activate virtual environment
 python -m venv venv
@@ -61,21 +61,37 @@ pip install -r requirements.txt
 python main.py
 ```
 
+### Vendor filter mode
+
+By default the scanner reports only devices matching known OUIs/keywords (`SCANNER_VENDOR_FILTER=1`).
+To scan all ARP devices in the network:
+
+```powershell
+$env:SCANNER_VENDOR_FILTER="0"
+python main.py
+```
+
+Restore default:
+
+```powershell
+Remove-Item Env:SCANNER_VENDOR_FILTER -ErrorAction SilentlyContinue
+```
+
 ### Advanced debug mode (for tests before commit)
 
 Enable detailed logs only for local test runs:
 
 ```powershell
-$env:BALLUFF_DEBUG="1"
-$env:BALLUFF_DEBUG_FILE=".logs\\debug.log"   # optional
+$env:SCANNER_DEBUG="1"
+$env:SCANNER_DEBUG_FILE=".logs\\debug.log"   # optional
 python main.py
 ```
 
 Disable again:
 
 ```powershell
-Remove-Item Env:BALLUFF_DEBUG -ErrorAction SilentlyContinue
-Remove-Item Env:BALLUFF_DEBUG_FILE -ErrorAction SilentlyContinue
+Remove-Item Env:SCANNER_DEBUG -ErrorAction SilentlyContinue
+Remove-Item Env:SCANNER_DEBUG_FILE -ErrorAction SilentlyContinue
 ```
 
 ---
@@ -83,10 +99,10 @@ Remove-Item Env:BALLUFF_DEBUG_FILE -ErrorAction SilentlyContinue
 ## Building the EXE
 
 ```powershell
-pyinstaller BalluffScanner.spec
+pyinstaller IndustrialDeviceScanner.spec
 ```
 
-Output: `dist\BalluffScanner-v<version>.exe`
+Output: `dist\IndustrialDeviceScanner-v<version>.exe`
 
 The spec file reads the version from `version.py` at build time — the EXE filename is versioned automatically.
 
@@ -97,7 +113,7 @@ The spec file reads the version from `version.py` at build time — the EXE file
 ## Project Structure
 
 ```
-balluff-scanner/
+scanner/
 ├── main.py               # Entry point
 ├── gui.py                # Tkinter UI
 ├── scanner.py            # ARP scan (passive + active probe)
@@ -105,7 +121,7 @@ balluff-scanner/
 ├── profinet_scanner.py   # Profinet DCP scan
 ├── version.py            # Single source of truth for version
 ├── CHANGELOG.md          # Release history
-├── BalluffScanner.spec   # PyInstaller build config
+├── IndustrialDeviceScanner.spec   # PyInstaller build config
 ├── requirements.txt      # Python dependencies
 ├── icon.ico              # App icon
 └── github.svg            # GitHub logo for UI
@@ -115,14 +131,14 @@ balluff-scanner/
 
 ## Protocol Roadmap
 
-The goal is to support all major protocols used by Balluff network devices. Version `1.0.0` will be released when all planned protocols and features are implemented.
+The goal is to support all major industrial network protocols. Version `1.0.0` will be released when all planned protocols and features are implemented.
 
 | Protocol | Status |
 |---|---|
-| EtherNet/IP (ARP) | ✅ v0.3.0 |
-| Modbus TCP (ARP) | ✅ v0.3.0 |
-| EtherCAT | ✅ v0.3.0 |
-| Profinet DCP | ✅ v0.3.0 |
+| EtherNet/IP (ARP) | ✅ v1.0.0 |
+| Modbus TCP (ARP) | ✅ v1.0.0 |
+| EtherCAT | ✅ v1.0.0 |
+| Profinet DCP | ✅ v1.0.0 |
 
 ---
 

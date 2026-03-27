@@ -8,15 +8,34 @@ import threading
 TRUTHY = {"1", "true", "yes", "on", "debug"}
 
 
+class _ScopedDebugFilter(logging.Filter):
+    """Allow DEBUG logs only for selected logger prefixes."""
+
+    def __init__(self, allowed_prefixes):
+        super().__init__()
+        self.allowed_prefixes = tuple(allowed_prefixes)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno != logging.DEBUG:
+            return True
+        return any(record.name == p or record.name.startswith(f"{p}.") for p in self.allowed_prefixes)
+
+
 def is_debug_enabled() -> bool:
-    value = os.getenv("BALLUFF_DEBUG", "0").strip().lower()
+    value = os.getenv("SCANNER_DEBUG", "0").strip().lower()
     return value in TRUTHY
+
+
+def is_vendor_filter_enabled() -> bool:
+    """True = scan only known vendors (default). False = scan all ARP devices."""
+    value = os.getenv("SCANNER_VENDOR_FILTER", "1").strip().lower()
+    return value not in {"0", "false", "no", "off", "all"}
 
 
 def _build_handlers(debug_enabled: bool):
     handlers = [logging.StreamHandler(sys.stdout)]
 
-    log_file = os.getenv("BALLUFF_DEBUG_FILE", "").strip()
+    log_file = os.getenv("SCANNER_DEBUG_FILE", "").strip()
     if debug_enabled and log_file:
         path = pathlib.Path(log_file)
         if not path.is_absolute():
@@ -42,16 +61,28 @@ def configure_debug_logging() -> None:
     )
 
     if debug_enabled:
+        # Domyslnie zostawiamy DEBUG tylko dla LLDP, zeby nie zalewac konsoli.
+        # Nadpisanie: SCANNER_DEBUG_SCOPE=all lub lista loggerow np. "lldp_scanner,gui".
+        scope = os.getenv("SCANNER_DEBUG_SCOPE", "lldp_scanner").strip().lower()
+        if scope not in {"", "all", "*"}:
+            allowed = [part.strip() for part in scope.split(",") if part.strip()]
+            if allowed:
+                root_logger = logging.getLogger()
+                scoped_filter = _ScopedDebugFilter(allowed)
+                for handler in root_logger.handlers:
+                    handler.addFilter(scoped_filter)
+
+    if debug_enabled:
         logging.getLogger(__name__).debug(
-            "Advanced debug enabled (BALLUFF_DEBUG=%s)",
-            os.getenv("BALLUFF_DEBUG"),
+            "Advanced debug enabled (SCANNER_DEBUG=%s)",
+            os.getenv("SCANNER_DEBUG"),
         )
 
     configure_debug_logging._configured = True
 
 
 def install_exception_hooks() -> None:
-    logger = logging.getLogger("balluff.unhandled")
+    logger = logging.getLogger("scanner.unhandled")
 
     def _sys_hook(exc_type, exc_value, exc_traceback):
         logger.exception("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))

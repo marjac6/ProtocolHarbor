@@ -1,18 +1,25 @@
 Changelog
 
+[1.0.0]
+
+- Vendor-agnostic branding and documentation
+- Unified device list: one row per physical device (except EtherCAT)
+- Dynamic protocol switching in-place (ARP/Profinet/EtherNet-IP/Modbus)
+- Protocol identity probing for EtherNet/IP and Modbus TCP
+- LLDP enrichment for firmware and supplemental metadata
+- Improved Profinet DCP parsing and field mapping
+- Improved logging controls with module-scoped debug
+
 [0.3.0]
 
-Added Ethercat scan for single device (pysoem)
+- Added EtherCAT scan support
 
 [0.2.0]
 
-Removed auto-refresh panel — scan runs until manually stopped
-Fixed Profinet DCP scan for "All adapters" mode
-DCP Identify is now re-sent every 5 s (detects late-joining devices)
-Added version bar with changelog popup and repo link
-Window is freely resizable
+- Improved scan stability and adapter handling
+- Improved Profinet DCP discovery in all-adapter mode
+- Added GUI quality-of-life improvements
 
 [0.1.0]
 
-Initial release
-Balluff/BNI device detection via ARP + Profinet DCP
+- Initial release

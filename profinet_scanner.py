@@ -58,8 +58,11 @@ def parse_dcp_payload(src_mac, payload):
             "mac":             src_mac,
             "ip":              "",
             "name_of_station": "",
+            "type_of_station": "",
             "vendor_id":       "",
             "device_id":       "",
+            "device_role":     "",
+            "device_instance": "",
             "device_family":   "",
             "firmware":        "",
             "protocol":        "Profinet DCP",
@@ -73,24 +76,37 @@ def parse_dcp_payload(src_mac, payload):
             offset += 4
             block_data = payload[offset:offset + length]
             offset += length + (length % 2)
+
+            # Każdy blok DCP ma 2 bajty BlockInfo na początku.
+            value = block_data[2:] if len(block_data) >= 2 else b""
+
             if (opt, subopt) == (0x01, 0x02):
-                if len(block_data) >= 8:
+                # IP Parameter: BlockInfo(2) + IP(4) + Mask(4) + Gateway(4)
+                if len(block_data) >= 14:
                     ip_bytes = block_data[2:6]
                     result["ip"] = ".".join(str(b) for b in ip_bytes)
             elif (opt, subopt) == (0x02, 0x01):
-                result["name_of_station"] = block_data[2:].decode("ascii", errors="ignore").rstrip("\x00")
+                # Manufacturer specific (Type of Station)
+                result["type_of_station"] = value.decode("ascii", errors="ignore").rstrip("\x00")
             elif (opt, subopt) == (0x02, 0x02):
+                # Name Of Station
+                result["name_of_station"] = value.decode("ascii", errors="ignore").rstrip("\x00")
+            elif (opt, subopt) == (0x02, 0x03):
+                # Device ID: BlockInfo(2) + VendorID(2) + DeviceID(2)
                 if len(block_data) >= 6:
                     vendor = struct.unpack_from(">H", block_data, 2)[0]
                     device = struct.unpack_from(">H", block_data, 4)[0]
                     result["vendor_id"] = f"0x{vendor:04X}"
                     result["device_id"] = f"0x{device:04X}"
-            elif (opt, subopt) == (0x03, 0x04):
-                result["device_family"] = block_data[2:].decode("ascii", errors="ignore").rstrip("\x00")
+            elif (opt, subopt) == (0x02, 0x04):
+                # Device Role: BlockInfo(2) + Role(1) + Reserved(1)
+                if len(block_data) >= 3:
+                    result["device_role"] = f"0x{block_data[2]:02X}"
             elif (opt, subopt) == (0x02, 0x07):
-                result["firmware"] = block_data[2:].decode("ascii", errors="ignore").rstrip("\x00")
-            elif (opt, subopt) == (0x02, 0x03):
-                result["firmware"] = block_data[2:].decode("ascii", errors="ignore").rstrip("\x00")
+                # Device Instance: BlockInfo(2) + High(1) + Low(1)
+                if len(block_data) >= 4:
+                    result["device_instance"] = f"{block_data[2]}.{block_data[3]}"
+
         return result if result["mac"] else None
     except Exception as e:
         log_exception(logger, "Blad parsowania DCP", e)
