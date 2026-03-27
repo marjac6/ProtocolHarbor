@@ -15,6 +15,8 @@ from profinet_scanner import start_dcp_scan_all, start_dcp_scan
 from ethercat_scanner import start_ecat_scan_all, start_ecat_scan
 
 REPO_URL = "https://github.com/marjac6/balluff-scanner"
+ADAPTER_REFRESH_IDLE_MS = 5000
+ADAPTER_REFRESH_SCANNING_MS = 15000
 
 
 def _resource_path(filename):
@@ -42,6 +44,8 @@ class App:
         self.stop_event    = threading.Event()
         self.scanning      = False
         self.found_devices = []
+        self.adapters = []
+        self._adapter_signature = ()
 
         def svg_to_tkimg(svg_path, size=(16, 16)):
             drawing = svg2rlg(svg_path)
@@ -55,7 +59,8 @@ class App:
 
         self.github_logo = svg_to_tkimg(_resource_path("github.svg"))
         self._build_ui()
-        self._load_adapters()
+        self._refresh_adapters(force_log=True)
+        self._schedule_adapter_refresh()
 
     def _build_ui(self):
         # -- adapter selector --
@@ -163,15 +168,44 @@ class App:
         st.insert("1.0", CHANGELOG)
         st.configure(state="disabled")
 
-    def _load_adapters(self):
-        self.adapters = get_adapters()
-        names = ["Wszystkie adaptery"] + [
-            f"{a['description']}  [{', '.join(a['ips']) or 'brak IP'}]"
-            for a in self.adapters
-        ]
+    def _adapter_sig(self, adapters):
+        return tuple(
+            (a.get("name", ""), a.get("description", ""), tuple(a.get("ips", [])))
+            for a in adapters
+        )
+
+    def _adapter_label(self, adapter):
+        ips = ", ".join(adapter.get("ips", [])) or "brak IP"
+        return f"{adapter.get('description', '')}  [{ips}]"
+
+    def _refresh_adapters(self, force_log=False):
+        current_value = self.adapter_var.get()
+        current_index = self.adapter_cb.current()
+        new_adapters = get_adapters()
+        new_sig = self._adapter_sig(new_adapters)
+        if not force_log and new_sig == self._adapter_signature:
+            return
+
+        self.adapters = new_adapters
+        self._adapter_signature = new_sig
+
+        names = ["Wszystkie adaptery"] + [self._adapter_label(a) for a in self.adapters]
         self.adapter_cb["values"] = names
-        self.adapter_cb.current(0)
-        self.log_message(f"Found {len(self.adapters)} adapter(s).")
+
+        if current_value in names:
+            self.adapter_var.set(current_value)
+        else:
+            self.adapter_cb.current(0)
+            if self.scanning and current_index > 0:
+                self.log_message("Selected adapter disconnected/removed. Stopping scan.")
+                self._stop_scan()
+
+        self.log_message(f"Adapters updated: {len(self.adapters)} available.")
+
+    def _schedule_adapter_refresh(self):
+        self._refresh_adapters(force_log=False)
+        interval = ADAPTER_REFRESH_SCANNING_MS if self.scanning else ADAPTER_REFRESH_IDLE_MS
+        self.root.after(interval, self._schedule_adapter_refresh)
 
     def log_message(self, msg):
         self.log.configure(state="normal")
@@ -236,12 +270,13 @@ class App:
         Wyświetla:
           name       = product_name (np. "BNI XG5-538-0B5-R067")
           vendor_id  = hex VID
-          device_id  = product_name (powtórzony — najważniejsza info)
+          device_id  = product_code (prawdziwy EtherCAT Product Code)
           version    = sw_version   (np. "1.3.1")
         """
         product_name = info.get("product_name", "")
         sw_version   = info.get("sw_version",   "")
         vendor_id    = info.get("vendor_id",    "")
+        product_code = info.get("product_code", "")
 
         key = (info.get("adapter", ""), vendor_id, product_name)
         for d in self.found_devices:
@@ -257,13 +292,13 @@ class App:
             product_name or info.get("name",""), # name
             "EtherCAT",                          # protocol
             vendor_id,                           # vendor_id
-            product_name,                        # device_id column = product name
+            product_code,                        # device_id column = EtherCAT Product Code
             sw_version,                          # version column
             info.get("adapter", "?"),            # adapter
         ))
         self.log_message(
             f"⚡ EtherCAT: {product_name or '?'}  "
-            f"v{sw_version}  VID={vendor_id}  "
+            f"v{sw_version}  VID={vendor_id}  PID={product_code}  "
             f"[{info.get('adapter','?')}]"
         )
 
@@ -276,6 +311,7 @@ class App:
             self._stop_scan()
 
     def _start_scan(self):
+        self._refresh_adapters(force_log=False)
         self.scanning = True
         self.stop_event.clear()
         self.btn_scan.config(text="⏹  Stop", bg="#c62828")
@@ -295,7 +331,14 @@ class App:
                 target=start_ecat_scan_all,
                 args=(self.on_ecat_found, self.stop_event), daemon=True).start()
         else:
-            adapter = self.adapters[selected - 1]
+            idx = selected - 1
+            if idx < 0 or idx >= len(self.adapters):
+                self.log_message("Selected adapter is no longer available. Refreshing list.")
+                self._refresh_adapters(force_log=True)
+                self._stop_scan()
+                return
+
+            adapter = self.adapters[idx]
             self.log_message(
                 f"Starting ARP + Profinet DCP + EtherCAT on: {adapter['description']}…")
             threading.Thread(

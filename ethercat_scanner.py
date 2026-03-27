@@ -7,16 +7,10 @@ Wymaga w systemie: Npcap (tryb WinPcap compatible) lub WinPcap.
 
 import threading
 import time
-import logging
-import sys
 import pysoem
+from debug_utils import get_logger, log_exception
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="[ECAT-DBG] %(message)s",
-    stream=sys.stdout,
-)
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 
@@ -149,7 +143,7 @@ def _active_scan(adapter_name: str, callback, stop_event):
                 "protocol":     "EtherCAT",
                 "adapter":      adapter_name,
                 "vendor_id":    f"0x{vid:08X}",
-                "product_code": display_name,
+                "product_code": f"0x{pid:08X}",
                 "revision":     sw_version,
                 "serial":       f"0x{getattr(slave, 'serial', 0):08X}",
                 "_update":      False,
@@ -160,8 +154,7 @@ def _active_scan(adapter_name: str, callback, stop_event):
 
     except Exception as e:
         # Nie loguj błędów przerwania (np. gdy close() w trakcie read())
-        if "reset by peer" not in str(e).lower() and "socket" not in str(e).lower():
-             log.error(f"Wyjątek: {e}")
+        log_exception(log, "Wyjątek EtherCAT", e, ["reset by peer", "socket"])
     finally:
         try: master.close()
         except: pass

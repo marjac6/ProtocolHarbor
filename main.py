@@ -2,6 +2,7 @@
 import sys
 import os
 import tkinter as tk
+from debug_utils import configure_debug_logging, install_exception_hooks
 from gui import App
 
 def _resource_path(filename):
@@ -9,6 +10,8 @@ def _resource_path(filename):
     return os.path.join(base, filename)
 
 if __name__ == "__main__":
+    configure_debug_logging()
+    install_exception_hooks()
     root = tk.Tk()
     try:
         root.iconbitmap(_resource_path("icon.ico"))

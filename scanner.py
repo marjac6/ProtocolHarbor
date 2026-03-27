@@ -2,6 +2,9 @@
 from scapy.all import sniff, ARP, Ether
 from scapy.arch.windows import get_windows_if_list
 import threading
+from debug_utils import get_logger, log_exception
+
+logger = get_logger(__name__)
 
 # OUI producentów — pierwsze 3 bajty MAC
 VENDOR_OUI = {
@@ -32,20 +35,45 @@ IGNORE_DESCRIPTIONS = [
     "Loopback",
     "Kernel Debug",
     "Bluetooth",
+    "VirtualBox",
+    "Host-Only",
     "Tailscale",
     "Wintun",
     "Wi-Fi Direct",
 ]
 
+ALLOWED_IF_TYPES = {6, 71}  # Ethernet, Wi-Fi
+
 
 def is_useful_adapter(adapter):
-    desc = adapter.get("description", "")
+    desc = (adapter.get("description", "") or "")
+    desc_l = desc.lower()
     for suffix in IGNORE_SUFFIXES:
-        if suffix in desc:
+        if suffix.lower() in desc_l:
             return False
     for keyword in IGNORE_DESCRIPTIONS:
-        if keyword in desc:
+        if keyword.lower() in desc_l:
             return False
+    return True
+
+
+def is_available_adapter(adapter):
+    """Heurystycznie wykrywa adaptery, które są aktualnie dostępne/podłączone."""
+    if adapter.get("type") not in ALLOWED_IF_TYPES:
+        return False
+
+    if not adapter.get("mac"):
+        return False
+
+    ips = [ip for ip in adapter.get("ips", []) if ip and ip not in ("127.0.0.1", "::1")]
+    if not ips:
+        return False
+
+    ipv4_metric = int(adapter.get("ipv4_metric", 0) or 0)
+    ipv6_metric = int(adapter.get("ipv6_metric", 0) or 0)
+    if ipv4_metric == 0 and ipv6_metric == 0:
+        return False
+
     return True
 
 
@@ -57,12 +85,16 @@ def get_adapters():
             adapter = {
                 "name": iface.get("name", ""),
                 "description": iface.get("description", ""),
-                "ips": iface.get("ips", [])
+                "ips": iface.get("ips", []),
+                "type": iface.get("type", 0),
+                "mac": iface.get("mac", ""),
+                "ipv4_metric": iface.get("ipv4_metric", 0),
+                "ipv6_metric": iface.get("ipv6_metric", 0),
             }
-            if is_useful_adapter(adapter):
+            if is_useful_adapter(adapter) and is_available_adapter(adapter):
                 adapters.append(adapter)
     except Exception as e:
-        print(f"Błąd pobierania adapterów: {e}")
+        log_exception(logger, "Błąd pobierania adapterów", e)
     return adapters
 
 
@@ -130,8 +162,7 @@ def start_scan(adapter_name, callback, stop_event):
             store=False
         )
     except Exception as e:
-        if "not found" not in str(e).lower():
-            print(f"Błąd skanowania {adapter_name}: {e}")
+        log_exception(logger, f"Błąd skanowania {adapter_name}", e, ["not found"])
 
 
 def start_scan_all(callback, stop_event):
@@ -181,7 +212,7 @@ def send_arp_probe(adapter_name, stop_event):
             sendp(pkt, iface=adapter_name, verbose=False)
             time.sleep(0.1)
         except Exception as e:
-            print(f"Błąd wysyłania probe na {adapter_name}: {e}")
+            log_exception(logger, f"Błąd wysyłania probe na {adapter_name}", e)
 
 
 def start_active_scan(callback, stop_event):

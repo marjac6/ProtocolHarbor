@@ -2,6 +2,9 @@
 import threading
 import struct
 from scapy.all import sendp, sniff, Ether, Raw
+from debug_utils import get_logger, log_exception
+
+logger = get_logger(__name__)
 
 PROFINET_MULTICAST = "01:0e:cf:00:00:00"
 PROFINET_ETHERTYPE = 0x8892
@@ -90,7 +93,7 @@ def parse_dcp_payload(src_mac, payload):
                 result["firmware"] = block_data[2:].decode("ascii", errors="ignore").rstrip("\x00")
         return result if result["mac"] else None
     except Exception as e:
-        print(f"Blad parsowania DCP: {e}")
+        log_exception(logger, "Blad parsowania DCP", e)
         return None
 
 
@@ -100,7 +103,7 @@ def send_dcp_identify(adapter_name, stop_event):
         pkt = Ether(dst=PROFINET_MULTICAST, type=PROFINET_ETHERTYPE) / Raw(load=payload)
         sendp(pkt, iface=adapter_name, verbose=False)
     except Exception as e:
-        print(f"Blad wysylania DCP na {adapter_name}: {e}")
+        log_exception(logger, f"Blad wysylania DCP na {adapter_name}", e)
 
 
 def listen_dcp_responses(adapter_name, callback, stop_event, burst_timeout=3):
@@ -128,8 +131,7 @@ def listen_dcp_responses(adapter_name, callback, stop_event, burst_timeout=3):
                 store=False
             )
         except Exception as e:
-            if "not found" not in str(e).lower():
-                print(f"Blad nasluchiwania DCP na {adapter_name}: {e}")
+            log_exception(logger, f"Blad nasluchiwania DCP na {adapter_name}", e, ["not found"])
             break
 
 
