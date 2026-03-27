@@ -3,4 +3,3 @@ pyinstaller
 Pillow
 reportlab
 svglib
-PyMuPDF
