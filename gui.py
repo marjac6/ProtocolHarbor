@@ -21,7 +21,7 @@ from modbus_scanner import probe_modbus_device
 from vendor_registry import lookup_vendor_name
 from debug_utils import get_logger
 
-REPO_URL = "https://github.com/<twoj-login>/ProtocolHarbor"
+REPO_URL = "https://github.com/marjac6/ProtocolHarbor"
 ADAPTER_REFRESH_IDLE_MS = 5000
 ADAPTER_REFRESH_SCANNING_MS = 15000
 PROBE_COOLDOWN_SECONDS = 15

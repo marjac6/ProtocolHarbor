@@ -45,7 +45,7 @@ A network scanning tool for detecting industrial field devices without prior kno
 
 ```powershell
 # 1. Clone the repository
-git clone https://github.com/<twoj-login>/ProtocolHarbor.git
+git clone https://github.com/marjac6/ProtocolHarbor.git
 cd ProtocolHarbor
 
 # 2. Create and activate virtual environment
