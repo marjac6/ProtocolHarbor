@@ -134,11 +134,11 @@ ProtocolHarbor/
 
 ## Roadmap
 
-- Profinet DCP: zmiana adresu IP dla wybranych urządzeń z poziomu GUI
-- Zmiana protokołu dla wybranych urządzeń: EtherCAT -> Profinet
+- Profinet DCP: IP address change for selected devices from the GUI
+- Protocol change for selected devices: EtherCAT -> Profinet
 
-Uwagi implementacyjne:
-Zmiana protokołu EtherCAT -> Profinet będzie dostępna tylko dla urządzeń, które wspierają taki tryb przełączania oraz udostępniają odpowiedni mechanizm konfiguracyjny.
+Implementation note:
+EtherCAT -> Profinet protocol switching will be available only for devices that support this transition and provide the required configuration mechanism.
 
 ---
 
