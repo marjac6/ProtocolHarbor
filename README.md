@@ -13,11 +13,12 @@ A network scanning tool for detecting industrial field devices without prior kno
 
 ## Features
 
-- Detects industrial devices via **ARP** (passive + active probe)
-- Detects Profinet devices via **DCP Identify** multicast
+- Multi-protocol discovery: **ARP**, **Profinet DCP**, **EtherNet/IP**, **Modbus TCP**, **EtherCAT**, **LLDP**
 - Scans all network adapters simultaneously or a single selected adapter
-- Continuous scan — devices are added to the list as they respond
-- Displays IP, MAC, device name, protocol, VendorID, DeviceID and adapter
+- Continuous scan with in-place updates when device protocol changes
+- Unified device list (single row per physical device; EtherCAT entries remain separate)
+- Displays IP, MAC, producer, module name, protocol, VendorID, DeviceID, version and adapter
+- LLDP-based enrichment for missing metadata (for example firmware)
 - Resizable GUI with live log, version bar and changelog popup
 
 ---
@@ -61,22 +62,6 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### Vendor filter mode
-
-By default the scanner reports only devices matching known OUIs/keywords (`SCANNER_VENDOR_FILTER=1`).
-To scan all ARP devices in the network:
-
-```powershell
-$env:SCANNER_VENDOR_FILTER="0"
-python main.py
-```
-
-Restore default:
-
-```powershell
-Remove-Item Env:SCANNER_VENDOR_FILTER -ErrorAction SilentlyContinue
-```
-
 ### Advanced debug mode (for tests before commit)
 
 Enable detailed logs only for local test runs:
@@ -113,12 +98,17 @@ The spec file reads the version from `version.py` at build time — the EXE file
 ## Project Structure
 
 ```
-scanner/
+ProtocolHarbor/
 ├── main.py               # Entry point
 ├── gui.py                # Tkinter UI
 ├── scanner.py            # ARP scan (passive + active probe)
 ├── ethercat_scanner.py   # EtherCAT scan
 ├── profinet_scanner.py   # Profinet DCP scan
+├── ethernetip_scanner.py # EtherNet/IP identity probe
+├── modbus_scanner.py     # Modbus TCP identity probe
+├── lldp_scanner.py       # LLDP listener/enrichment
+├── vendor_registry.py    # Vendor/OUI/VendorID registry
+├── debug_utils.py        # Logging and debug controls
 ├── version.py            # Single source of truth for version
 ├── CHANGELOG.md          # Release history
 ├── ProtocolHarbor.spec   # PyInstaller build config
@@ -129,16 +119,26 @@ scanner/
 
 ---
 
-## Protocol Roadmap
-
-The goal is to support all major industrial network protocols. Version `1.0.0` will be released when all planned protocols and features are implemented.
+## Supported Protocols
 
 | Protocol | Status |
 |---|---|
-| EtherNet/IP (ARP) | ✅ v1.0.0 |
-| Modbus TCP (ARP) | ✅ v1.0.0 |
+| ARP | ✅ v1.0.0 |
+| LLDP | ✅ v1.0.0 |
+| EtherNet/IP | ✅ v1.0.0 |
+| Modbus TCP | ✅ v1.0.0 |
 | EtherCAT | ✅ v1.0.0 |
 | Profinet DCP | ✅ v1.0.0 |
+
+---
+
+## Roadmap
+
+- Profinet DCP: zmiana adresu IP dla wybranych urządzeń z poziomu GUI
+- Zmiana protokołu dla wybranych urządzeń: EtherCAT -> Profinet
+
+Uwagi implementacyjne:
+Zmiana protokołu EtherCAT -> Profinet będzie dostępna tylko dla urządzeń, które wspierają taki tryb przełączania oraz udostępniają odpowiedni mechanizm konfiguracyjny.
 
 ---
 
