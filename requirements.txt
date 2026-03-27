@@ -3,3 +3,4 @@ pyinstaller
 Pillow
 reportlab
 svglib
+pysoem

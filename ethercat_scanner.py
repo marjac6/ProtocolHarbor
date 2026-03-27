@@ -9,6 +9,7 @@ import threading
 import time
 import logging
 import sys
+import pysoem
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -17,12 +18,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-try:
-    import pysoem
-    log.info("Biblioteka pysoem załadowana pomyślnie.")
-except ImportError:
-    log.error("BŁĄD: Biblioteka 'pysoem' nie jest zainstalowana. Użyj: pip install pysoem")
-    pysoem = None
+
 
 
 # ─── Mapowanie adapter_name → NPF device path ─────────────────────────────────
