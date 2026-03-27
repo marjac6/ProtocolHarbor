@@ -69,7 +69,7 @@ python main.py
 pyinstaller BalluffScanner.spec
 ```
 
-Output: `dist\BalluffScanner-v0.3.0.exe`
+Output: `dist\BalluffScanner-v<version>.exe`
 
 The spec file reads the version from `version.py` at build time — the EXE filename is versioned automatically.
 
@@ -84,6 +84,7 @@ balluff-scanner/
 ├── main.py               # Entry point
 ├── gui.py                # Tkinter UI
 ├── scanner.py            # ARP scan (passive + active probe)
+├── ethercat_scanner.py   # EtherCAT scan
 ├── profinet_scanner.py   # Profinet DCP scan
 ├── version.py            # Single source of truth for version
 ├── CHANGELOG.md          # Release history
