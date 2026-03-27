@@ -12,12 +12,12 @@ from io import BytesIO
 from version import __version__
 from scanner import get_adapters, start_scan, start_active_scan, send_arp_probe
 from profinet_scanner import start_dcp_scan_all, start_dcp_scan
+from ethercat_scanner import start_ecat_scan_all, start_ecat_scan
 
 REPO_URL = "https://github.com/marjac6/balluff-scanner"
 
 
 def _resource_path(filename):
-    """Resolve path to bundled resource — works for both script and frozen EXE."""
     base = sys._MEIPASS if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(sys.argv[0]))
     return os.path.join(base, filename)
 
@@ -36,14 +36,13 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(f"Balluff / BNI Device Scanner  v{__version__}")
-        self.root.geometry("860x620")
+        self.root.geometry("1020x640")
         self.root.resizable(True, True)
-        self.root.minsize(640, 480)
+        self.root.minsize(720, 480)
         self.stop_event    = threading.Event()
         self.scanning      = False
         self.found_devices = []
 
-        # Load GitHub logo from SVG; fall back to None if file missing or broken
         def svg_to_tkimg(svg_path, size=(16, 16)):
             drawing = svg2rlg(svg_path)
             if drawing is None:
@@ -55,7 +54,6 @@ class App:
             return ImageTk.PhotoImage(img)
 
         self.github_logo = svg_to_tkimg(_resource_path("github.svg"))
-
         self._build_ui()
         self._load_adapters()
 
@@ -65,48 +63,60 @@ class App:
         top.pack(fill="x", padx=10, pady=(10, 4))
 
         tk.Label(top, text="Skanuj:").grid(row=0, column=0, sticky="w")
-
         self.adapter_var = tk.StringVar(value="Wszystkie adaptery")
-        self.adapter_cb  = ttk.Combobox(top, textvariable=self.adapter_var, width=55, state="readonly")
+        self.adapter_cb  = ttk.Combobox(top, textvariable=self.adapter_var,
+                                         width=55, state="readonly")
         self.adapter_cb.grid(row=0, column=1, padx=8)
 
         self.btn_scan = tk.Button(
             top, text="▶  Start", width=12,
             bg="#2e7d32", fg="white", font=("Segoe UI", 9, "bold"),
-            command=self.toggle_scan
+            command=self.toggle_scan,
         )
         self.btn_scan.grid(row=0, column=2, padx=4)
 
-        self.btn_clear = tk.Button(top, text="🗑  Wyczyść", width=12, command=self.clear_results)
+        self.btn_clear = tk.Button(top, text="🗑  Wyczyść", width=12,
+                                    command=self.clear_results)
         self.btn_clear.grid(row=0, column=3, padx=4)
 
         # -- status bar --
         self.status_var = tk.StringVar(value="Gotowy")
-        tk.Label(
-            self.root, textvariable=self.status_var,
-            anchor="w", relief="sunken", font=("Segoe UI", 8)
-        ).pack(fill="x", padx=10, pady=(0, 4))
+        tk.Label(self.root, textvariable=self.status_var,
+                 anchor="w", relief="sunken", font=("Segoe UI", 8)
+                 ).pack(fill="x", padx=10, pady=(0, 4))
 
         # -- results table --
-        table_frame = tk.LabelFrame(self.root, text="Znalezione urządzenia", padx=8, pady=6)
+        # Kolumny:
+        #   ip, mac, name        — wspólne
+        #   protocol             — ARP / Profinet DCP / EtherCAT
+        #   vendor_id            — VendorID hex  (wszystkie protokoły)
+        #   device_id            — DeviceID / ProductCode / ProductName (zależnie od protokołu)
+        #   version              — SW Version (EtherCAT) / Revision (Profinet)
+        #   adapter
+        table_frame = tk.LabelFrame(self.root, text="Znalezione urządzenia",
+                                     padx=8, pady=6)
         table_frame.pack(fill="both", expand=True, padx=10, pady=4)
 
-        cols = ("ip", "mac", "name", "protocol", "vendor_id", "device_id", "adapter")
+        cols = ("ip", "mac", "name", "protocol", "vendor_id", "device_id", "version", "adapter")
         self.tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=8)
+
         self.tree.heading("ip",        text="Adres IP")
         self.tree.heading("mac",       text="Adres MAC")
         self.tree.heading("name",      text="Nazwa / Producent")
         self.tree.heading("protocol",  text="Protokół")
         self.tree.heading("vendor_id", text="VendorID")
-        self.tree.heading("device_id", text="DeviceID")
+        self.tree.heading("device_id", text="DeviceID / ProductName")
+        self.tree.heading("version",   text="Version")
         self.tree.heading("adapter",   text="Adapter")
-        self.tree.column("ip",        width=120)
-        self.tree.column("mac",       width=145)
-        self.tree.column("name",      width=160)
-        self.tree.column("protocol",  width=100)
-        self.tree.column("vendor_id", width=70)
-        self.tree.column("device_id", width=70)
-        self.tree.column("adapter",   width=170)
+
+        self.tree.column("ip",        width=110)
+        self.tree.column("mac",       width=140)
+        self.tree.column("name",      width=185)
+        self.tree.column("protocol",  width=105)
+        self.tree.column("vendor_id", width=90)
+        self.tree.column("device_id", width=175)
+        self.tree.column("version",   width=65)
+        self.tree.column("adapter",   width=155)
 
         scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
@@ -117,35 +127,29 @@ class App:
         log_frame = tk.LabelFrame(self.root, text="Log", padx=8, pady=4)
         log_frame.pack(fill="x", padx=10, pady=(4, 2))
 
-        self.log = scrolledtext.ScrolledText(log_frame, height=5, font=("Consolas", 8), state="disabled")
+        self.log = scrolledtext.ScrolledText(log_frame, height=5,
+                                              font=("Consolas", 8), state="disabled")
         self.log.pack(fill="x")
 
-        # -- bottom bar: version + repo link --
+        # -- bottom bar --
         bottom = tk.Frame(self.root, bg="#f0f0f0", bd=1, relief="sunken")
         bottom.pack(fill="x", padx=0, pady=(2, 0))
 
-        tk.Label(
-            bottom, text=f"v{__version__}",
-            font=("Consolas", 7), fg="#888", bg="#f0f0f0"
-        ).pack(side="left", padx=8)
+        tk.Label(bottom, text=f"v{__version__}",
+                 font=("Consolas", 7), fg="#888", bg="#f0f0f0").pack(side="left", padx=8)
 
-        tk.Button(
-            bottom, text="changelog",
-            font=("Segoe UI", 7), fg="#555", bg="#f0f0f0",
-            relief="flat", cursor="hand2",
-            command=self._show_changelog
-        ).pack(side="left", padx=2)
+        tk.Button(bottom, text="changelog",
+                  font=("Segoe UI", 7), fg="#555", bg="#f0f0f0",
+                  relief="flat", cursor="hand2",
+                  command=self._show_changelog).pack(side="left", padx=2)
 
         repo_frame = tk.Frame(bottom, bg="#f0f0f0")
         repo_frame.pack(side="right", padx=8)
-
         if self.github_logo:
             tk.Label(repo_frame, image=self.github_logo, bg="#f0f0f0").pack(side="left")
-
-        lnk = tk.Label(
-            repo_frame, text="github: balluff-scanner",
-            font=("Segoe UI", 7, "underline"), fg="#0969da", bg="#f0f0f0", cursor="hand2"
-        )
+        lnk = tk.Label(repo_frame, text="github: balluff-scanner",
+                        font=("Segoe UI", 7, "underline"), fg="#0969da",
+                        bg="#f0f0f0", cursor="hand2")
         lnk.pack(side="left", padx=2)
         lnk.bind("<Button-1>", lambda e: webbrowser.open(REPO_URL))
 
@@ -175,11 +179,18 @@ class App:
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    # ── Callbacks ─────────────────────────────────────────────────────────────
+
     def on_device_found(self, info):
         self.root.after(0, self._add_device, info)
 
     def on_profinet_found(self, info):
         self.root.after(0, self._add_profinet_device, info)
+
+    def on_ecat_found(self, info):
+        self.root.after(0, self._add_ecat_device, info)
+
+    # ── Device adders ─────────────────────────────────────────────────────────
 
     def _add_device(self, info):
         key = (info["ip"], info["mac"])
@@ -191,7 +202,7 @@ class App:
             info.get("mac", ""),
             info.get("keyword", ""),
             info.get("type", "ARP"),
-            "", "",
+            "", "", "",
             info.get("adapter", "?"),
         ))
         self.log_message(
@@ -211,12 +222,52 @@ class App:
             "Profinet DCP",
             info.get("vendor_id", ""),
             info.get("device_id", ""),
+            "",
             info.get("adapter", "?"),
         ))
         self.log_message(
             f"🏭 Profinet: {info.get('name_of_station', '?')}  "
             f"IP={info.get('ip', '?')}  MAC={info.get('mac', '?')}"
         )
+
+    def _add_ecat_device(self, info):
+        """
+        Deduplikacja EtherCAT po (adapter, vendor_id, product_name).
+        Wyświetla:
+          name       = product_name (np. "BNI XG5-538-0B5-R067")
+          vendor_id  = hex VID
+          device_id  = product_name (powtórzony — najważniejsza info)
+          version    = sw_version   (np. "1.3.1")
+        """
+        product_name = info.get("product_name", "")
+        sw_version   = info.get("sw_version",   "")
+        vendor_id    = info.get("vendor_id",    "")
+
+        key = (info.get("adapter", ""), vendor_id, product_name)
+        for d in self.found_devices:
+            if d.get("protocol") != "EtherCAT":
+                continue
+            if (d.get("adapter",""), d.get("vendor_id",""), d.get("product_name","")) == key:
+                return
+
+        self.found_devices.append(info)
+        self.tree.insert("", "end", values=(
+            "",                                  # ip
+            "N/A",                               # mac
+            product_name or info.get("name",""), # name
+            "EtherCAT",                          # protocol
+            vendor_id,                           # vendor_id
+            product_name,                        # device_id column = product name
+            sw_version,                          # version column
+            info.get("adapter", "?"),            # adapter
+        ))
+        self.log_message(
+            f"⚡ EtherCAT: {product_name or '?'}  "
+            f"v{sw_version}  VID={vendor_id}  "
+            f"[{info.get('adapter','?')}]"
+        )
+
+    # ── Scan control ──────────────────────────────────────────────────────────
 
     def toggle_scan(self):
         if not self.scanning:
@@ -233,15 +284,32 @@ class App:
         selected = self.adapter_cb.current()
 
         if selected == 0:
-            self.log_message("Starting ARP + Profinet DCP on all adapters…")
-            threading.Thread(target=start_active_scan,  args=(self.on_device_found,   self.stop_event), daemon=True).start()
-            threading.Thread(target=start_dcp_scan_all, args=(self.on_profinet_found, self.stop_event), daemon=True).start()
+            self.log_message("Starting ARP + Profinet DCP + EtherCAT on all adapters…")
+            threading.Thread(
+                target=start_active_scan,
+                args=(self.on_device_found, self.stop_event), daemon=True).start()
+            threading.Thread(
+                target=start_dcp_scan_all,
+                args=(self.on_profinet_found, self.stop_event), daemon=True).start()
+            threading.Thread(
+                target=start_ecat_scan_all,
+                args=(self.on_ecat_found, self.stop_event), daemon=True).start()
         else:
             adapter = self.adapters[selected - 1]
-            self.log_message(f"Starting ARP + Profinet DCP on: {adapter['description']}…")
-            threading.Thread(target=start_scan,     args=(adapter["name"], self.on_device_found,   self.stop_event), daemon=True).start()
-            threading.Thread(target=send_arp_probe, args=(adapter["name"], self.stop_event),                         daemon=True).start()
-            threading.Thread(target=start_dcp_scan, args=(adapter["name"], self.on_profinet_found, self.stop_event), daemon=True).start()
+            self.log_message(
+                f"Starting ARP + Profinet DCP + EtherCAT on: {adapter['description']}…")
+            threading.Thread(
+                target=start_scan,
+                args=(adapter["name"], self.on_device_found, self.stop_event), daemon=True).start()
+            threading.Thread(
+                target=send_arp_probe,
+                args=(adapter["name"], self.stop_event), daemon=True).start()
+            threading.Thread(
+                target=start_dcp_scan,
+                args=(adapter["name"], self.on_profinet_found, self.stop_event), daemon=True).start()
+            threading.Thread(
+                target=start_ecat_scan,
+                args=(adapter["name"], self.on_ecat_found, self.stop_event), daemon=True).start()
 
     def _stop_scan(self):
         self.scanning = False
