@@ -40,6 +40,23 @@ def _resource_path(filename):
     return os.path.join(base, filename)
 
 
+def _load_footer_logo(path: str, target_px: int = 16):
+    """Load and downscale a footer icon to keep UI proportions stable."""
+    if not os.path.exists(path):
+        return None
+    try:
+        img = tk.PhotoImage(file=path)
+        width = max(img.width(), 1)
+        height = max(img.height(), 1)
+        scale = max(width / target_px, height / target_px)
+        factor = max(1, int(round(scale)))
+        if factor > 1:
+            img = img.subsample(factor, factor)
+        return img
+    except Exception:
+        return None
+
+
 def _load_changelog():
     try:
         with open(_resource_path("CHANGELOG.md"), encoding="utf-8") as f:
@@ -80,12 +97,9 @@ class App:
         self._lang_flag_images: dict = {}
 
         github_png_path = _resource_path("github.png")
-        self.github_logo = None
-        if os.path.exists(github_png_path):
-            try:
-                self.github_logo = tk.PhotoImage(file=github_png_path)
-            except Exception as exc:
-                LOGGER.warning("Could not load github.png (%s).", exc)
+        self.github_logo = _load_footer_logo(github_png_path, target_px=16)
+        if self.github_logo is None and os.path.exists(github_png_path):
+            LOGGER.warning("Could not load or scale github.png.")
         i18n.init_language()
         self._build_ui()
         self._refresh_adapters(force_log=True)

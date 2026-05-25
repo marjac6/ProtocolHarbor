@@ -6,6 +6,8 @@ Changelog
 - Added startup dependency check for Npcap (WinPcap API-compatible mode).
 - Added user-friendly popup with official Npcap download link when Npcap is not installed.
 - Improved startup resilience: app can continue to run with EtherCAT features unavailable.
+- Replaced runtime SVG rendering with bundled github.png to avoid Cairo/reportlab dependency at startup.
+- Fixed footer GitHub logo sizing by adding explicit icon downscaling.
 
 [1.3.0]
 
