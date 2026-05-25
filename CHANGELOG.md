@@ -1,5 +1,12 @@
 Changelog
 
+[1.3.1]
+
+- Fixed startup crash in EXE when EtherCAT runtime DLL dependencies are missing.
+- Added startup dependency check for Npcap (WinPcap API-compatible mode).
+- Added user-friendly popup with official Npcap download link when Npcap is not installed.
+- Improved startup resilience: app can continue to run with EtherCAT features unavailable.
+
 [1.3.0]
 
 - Added protocol switch: EtherCAT -> Profinet / Modbus TCP / Ethernet IP.

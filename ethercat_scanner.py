@@ -8,7 +8,10 @@ Wymaga w systemie: Npcap (tryb WinPcap compatible) lub WinPcap.
 import threading
 import time
 import struct
-import pysoem
+try:
+    import pysoem
+except Exception:
+    pysoem = None
 from debug_utils import get_logger, log_exception
 
 log = get_logger(__name__)

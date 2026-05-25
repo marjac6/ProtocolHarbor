@@ -3,12 +3,13 @@ import sys
 import os
 import ctypes
 import tkinter as tk
+import webbrowser
 from debug_utils import configure_debug_logging, install_exception_hooks
-from gui import App
 
 
 WINDOWS_APP_ID = "marjac6.ProtocolHarbor"
 _ICON_HANDLES = []
+NPCAP_URL = "https://npcap.com/#download"
 
 def _resource_path(filename):
     base = sys._MEIPASS if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -81,6 +82,126 @@ def _set_window_icon(root):
     except Exception:
         pass
 
+
+def _can_load_windows_dll(dll_name: str) -> tuple[bool, str]:
+    if os.name != "nt":
+        return True, ""
+    try:
+        ctypes.WinDLL(dll_name)
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _detect_npcap_problem() -> str:
+    """Return an error description when Npcap WinPcap-compatible runtime is missing."""
+    if os.name == "nt":
+        packet_ok, packet_err = _can_load_windows_dll("Packet.dll")
+        wpcap_ok, wpcap_err = _can_load_windows_dll("wpcap.dll")
+        if not (packet_ok and wpcap_ok):
+            reason_parts = []
+            if not packet_ok:
+                reason_parts.append(f"Packet.dll: {packet_err}")
+            if not wpcap_ok:
+                reason_parts.append(f"wpcap.dll: {wpcap_err}")
+            return "; ".join(reason_parts)
+    return ""
+
+
+def _show_npcap_warning() -> None:
+    reason = _detect_npcap_problem()
+    if not reason:
+        return
+
+    dialog_root = tk.Tk()
+    dialog_root.withdraw()
+    dialog_root.attributes("-topmost", True)
+
+    win = tk.Toplevel(dialog_root)
+    win.title("Wymagany Npcap")
+    win.resizable(False, False)
+    win.transient(dialog_root)
+
+    outer = tk.Frame(win, padx=18, pady=14)
+    outer.pack(fill="both", expand=True)
+
+    tk.Label(
+        outer,
+        text="Brakuje Npcap - funkcje EtherCAT sa obecnie niedostepne.",
+        anchor="w",
+        justify="left",
+        font=("Segoe UI", 10, "bold"),
+    ).pack(fill="x", pady=(0, 8))
+
+    tk.Label(
+        outer,
+        text="Aby wlaczyc EtherCAT, zainstaluj Npcap z zaznaczona opcja:\n"
+             "Install Npcap in WinPcap API-compatible Mode.",
+        anchor="w",
+        justify="left",
+        font=("Segoe UI", 9),
+    ).pack(fill="x")
+
+    link = tk.Label(
+        outer,
+        text=NPCAP_URL,
+        fg="#0b57d0",
+        cursor="hand2",
+        anchor="w",
+        justify="left",
+        font=("Segoe UI", 9, "underline"),
+    )
+    link.pack(fill="x", pady=(10, 0))
+    link.bind("<Button-1>", lambda _event: webbrowser.open(NPCAP_URL))
+
+    tk.Label(
+        outer,
+        text=f"Szczegoly diagnostyczne: {reason}",
+        anchor="w",
+        justify="left",
+        fg="#555555",
+        wraplength=520,
+        font=("Segoe UI", 8),
+    ).pack(fill="x", pady=(8, 0))
+
+    button_row = tk.Frame(outer)
+    button_row.pack(fill="x", pady=(14, 0))
+
+    def _open_and_close():
+        webbrowser.open(NPCAP_URL)
+        win.destroy()
+
+    tk.Button(
+        button_row,
+        text="Pobierz Npcap",
+        width=16,
+        bg="#0b57d0",
+        fg="white",
+        relief="flat",
+        command=_open_and_close,
+    ).pack(side="left")
+
+    tk.Button(
+        button_row,
+        text="Uruchom mimo to",
+        width=16,
+        command=win.destroy,
+    ).pack(side="right")
+
+    win.update_idletasks()
+    width = max(win.winfo_width(), 580)
+    height = max(win.winfo_height(), 250)
+    screen_w = win.winfo_screenwidth()
+    screen_h = win.winfo_screenheight()
+    pos_x = max((screen_w - width) // 2, 0)
+    pos_y = max((screen_h - height) // 2, 0)
+    win.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+
+    win.grab_set()
+    win.focus_force()
+    win.wait_window()
+    dialog_root.destroy()
+
 if __name__ == "__main__":
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
@@ -88,6 +209,11 @@ if __name__ == "__main__":
         pass
     configure_debug_logging()
     install_exception_hooks()
+
+    _show_npcap_warning()
+
+    from gui import App
+
     root = tk.Tk()
     app = App(root)
     _set_window_icon(root)
