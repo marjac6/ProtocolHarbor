@@ -32,6 +32,8 @@ REPO_URL = "https://github.com/marjac6/ProtocolHarbor"
 ADAPTER_REFRESH_IDLE_MS = 5000
 ADAPTER_REFRESH_SCANNING_MS = 15000
 PROBE_COOLDOWN_SECONDS = 15
+NPCAP_MISSING_REASON_ENV = "PROTOCOL_HARBOR_NPCAP_MISSING_REASON"
+NPCAP_URL_ENV = "PROTOCOL_HARBOR_NPCAP_URL"
 LOGGER = get_logger(__name__)
 
 
@@ -95,6 +97,7 @@ class App:
         self.vendor_filter_var = tk.StringVar(value=self._all_vendors_label)
         self._adapter_networks_by_mac: dict = {}
         self._lang_flag_images: dict = {}
+        self._npcap_warning_logged = False
 
         github_png_path = _resource_path("github.png")
         self.github_logo = _load_footer_logo(github_png_path, target_px=16)
@@ -102,8 +105,29 @@ class App:
             LOGGER.warning("Could not load or scale github.png.")
         i18n.init_language()
         self._build_ui()
+        self._log_missing_npcap_warning()
         self._refresh_adapters(force_log=True)
         self._schedule_adapter_refresh()
+
+    def _get_missing_npcap_warning(self) -> str:
+        reason = (os.getenv(NPCAP_MISSING_REASON_ENV) or "").strip()
+        if not reason:
+            return ""
+        url = (os.getenv(NPCAP_URL_ENV) or "https://npcap.com/#download").strip()
+        return (
+            "[Npcap] Brak Npcap - skanowanie moze nie dzialac poprawnie. "
+            "[Npcap] Npcap is missing - scanning may not work correctly. "
+            f"Powod/Reason: {reason} | Download: {url}"
+        )
+
+    def _log_missing_npcap_warning(self, force: bool = False) -> None:
+        msg = self._get_missing_npcap_warning()
+        if not msg:
+            return
+        if self._npcap_warning_logged and not force:
+            return
+        self.log_message(msg)
+        self._npcap_warning_logged = True
 
     def _build_ui(self):
         # -- language switcher (top-right, inside adapter frame) --
@@ -1588,6 +1612,7 @@ class App:
             self._stop_scan()
 
     def _start_scan(self):
+        self._log_missing_npcap_warning(force=True)
         self._refresh_adapters(force_log=False)
         self.scanning = True
         self.stop_event.clear()

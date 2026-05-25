@@ -10,6 +10,8 @@ from debug_utils import configure_debug_logging, install_exception_hooks
 WINDOWS_APP_ID = "marjac6.ProtocolHarbor"
 _ICON_HANDLES = []
 NPCAP_URL = "https://npcap.com/#download"
+NPCAP_MISSING_REASON_ENV = "PROTOCOL_HARBOR_NPCAP_MISSING_REASON"
+NPCAP_URL_ENV = "PROTOCOL_HARBOR_NPCAP_URL"
 
 def _resource_path(filename):
     base = sys._MEIPASS if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -110,7 +112,41 @@ def _detect_npcap_problem() -> str:
 
 def _show_npcap_warning() -> None:
     reason = _detect_npcap_problem()
+    if reason:
+        os.environ[NPCAP_MISSING_REASON_ENV] = reason
+        os.environ[NPCAP_URL_ENV] = NPCAP_URL
+    else:
+        os.environ.pop(NPCAP_MISSING_REASON_ENV, None)
+        os.environ.pop(NPCAP_URL_ENV, None)
+
     if not reason:
+        return
+
+    message = (
+        "Brakuje Npcap - funkcje EtherCAT sa obecnie niedostepne.\n\n"
+        "Aby wlaczyc EtherCAT, zainstaluj Npcap z zaznaczona opcja:\n"
+        "Install Npcap in WinPcap API-compatible Mode.\n\n"
+        "Npcap is missing - EtherCAT features are currently unavailable.\n\n"
+        "To enable EtherCAT, install Npcap with this option selected:\n"
+        "Install Npcap in WinPcap API-compatible Mode.\n\n"
+        f"Official link: {NPCAP_URL}\n\n"
+        f"Diagnostic details: {reason}\n\n"
+        "Open the official Npcap download page now?"
+    )
+
+    if os.name == "nt":
+        MB_ICONWARNING = 0x30
+        MB_YESNO = 0x04
+        MB_TOPMOST = 0x00040000
+        IDYES = 6
+        result = ctypes.windll.user32.MessageBoxW(
+            0,
+            message,
+            "Wymagany Npcap / Npcap Required",
+            MB_ICONWARNING | MB_YESNO | MB_TOPMOST,
+        )
+        if result == IDYES:
+            webbrowser.open(NPCAP_URL)
         return
 
     dialog_root = tk.Tk()
