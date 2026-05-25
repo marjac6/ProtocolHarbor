@@ -259,6 +259,14 @@ def t(key: str) -> str:
 _CHANGELOG_EN = """\
 Changelog
 
+[1.3.1]
+
+- Fixed startup crash in EXE when EtherCAT runtime DLL dependencies are missing.
+- Added startup dependency check for Npcap (WinPcap API-compatible mode).
+- Added bilingual Npcap popup with official download link.
+- Replaced runtime SVG rendering with bundled github.png to avoid Cairo/reportlab dependency at startup.
+- Fixed footer GitHub logo sizing with explicit downscaling.
+
 [1.3.0]
 
 - Added protocol switch: EtherCAT -> Profinet / Modbus TCP / Ethernet IP.
@@ -307,6 +315,14 @@ Changelog
 
 _CHANGELOG_PL = """\
 Changelog
+
+[1.3.1]
+
+- Naprawiono crash EXE przy starcie, gdy brakuje zależności DLL dla EtherCAT.
+- Dodano sprawdzanie zależności Npcap przy starcie (tryb WinPcap API-compatible).
+- Dodano dwujęzyczny popup Npcap z oficjalnym linkiem do pobrania.
+- Zastąpiono runtime renderowanie SVG statycznym plikiem github.png, aby usunąć zależność od Cairo/reportlab przy starcie.
+- Naprawiono rozmiar ikony GitHub w stopce przez jawne skalowanie.
 
 [1.3.0]
 
