@@ -118,7 +118,7 @@ def _show_npcap_warning() -> None:
     dialog_root.attributes("-topmost", True)
 
     win = tk.Toplevel(dialog_root)
-    win.title("Wymagany Npcap")
+    win.title("Wymagany Npcap / Npcap Required")
     win.resizable(False, False)
     win.transient(dialog_root)
 
@@ -127,7 +127,8 @@ def _show_npcap_warning() -> None:
 
     tk.Label(
         outer,
-        text="Brakuje Npcap - funkcje EtherCAT sa obecnie niedostepne.",
+        text="Brakuje Npcap - funkcje EtherCAT sa obecnie niedostepne.\n"
+             "Npcap is missing - EtherCAT features are currently unavailable.",
         anchor="w",
         justify="left",
         font=("Segoe UI", 10, "bold"),
@@ -135,8 +136,10 @@ def _show_npcap_warning() -> None:
 
     tk.Label(
         outer,
-        text="Aby wlaczyc EtherCAT, zainstaluj Npcap z zaznaczona opcja:\n"
-             "Install Npcap in WinPcap API-compatible Mode.",
+           text="Aby wlaczyc EtherCAT, zainstaluj Npcap z zaznaczona opcja:\n"
+               "Install Npcap in WinPcap API-compatible Mode.\n\n"
+               "To enable EtherCAT, install Npcap with this option selected:\n"
+               "Install Npcap in WinPcap API-compatible Mode.",
         anchor="w",
         justify="left",
         font=("Segoe UI", 9),
@@ -156,7 +159,7 @@ def _show_npcap_warning() -> None:
 
     tk.Label(
         outer,
-        text=f"Szczegoly diagnostyczne: {reason}",
+        text=f"Szczegoly diagnostyczne / Diagnostic details: {reason}",
         anchor="w",
         justify="left",
         fg="#555555",
@@ -173,8 +176,8 @@ def _show_npcap_warning() -> None:
 
     tk.Button(
         button_row,
-        text="Pobierz Npcap",
-        width=16,
+        text="Pobierz Npcap / Download Npcap",
+        width=30,
         bg="#0b57d0",
         fg="white",
         relief="flat",
@@ -183,8 +186,8 @@ def _show_npcap_warning() -> None:
 
     tk.Button(
         button_row,
-        text="Uruchom mimo to",
-        width=16,
+        text="Uruchom mimo to / Continue anyway",
+        width=30,
         command=win.destroy,
     ).pack(side="right")
 
