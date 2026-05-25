@@ -10,10 +10,6 @@ import time
 import ipaddress
 import subprocess
 import re
-from svglib.svglib import svg2rlg
-from reportlab.graphics import renderPM
-from PIL import Image, ImageTk
-from io import BytesIO
 from version import __version__
 from scanner import get_adapters, start_scan, start_active_scan, send_arp_probe
 from profinet_scanner import (
@@ -83,17 +79,13 @@ class App:
         self._adapter_networks_by_mac: dict = {}
         self._lang_flag_images: dict = {}
 
-        def svg_to_tkimg(svg_path, size=(16, 16)):
-            drawing = svg2rlg(svg_path)
-            if drawing is None:
-                return None
-            buf = BytesIO()
-            renderPM.drawToFile(drawing, buf, fmt="PNG")
-            buf.seek(0)
-            img = Image.open(buf).resize(size, Image.Resampling.LANCZOS)
-            return ImageTk.PhotoImage(img)
-
-        self.github_logo = svg_to_tkimg(_resource_path("github.svg"))
+        github_png_path = _resource_path("github.png")
+        self.github_logo = None
+        if os.path.exists(github_png_path):
+            try:
+                self.github_logo = tk.PhotoImage(file=github_png_path)
+            except Exception as exc:
+                LOGGER.warning("Could not load github.png (%s).", exc)
         i18n.init_language()
         self._build_ui()
         self._refresh_adapters(force_log=True)
